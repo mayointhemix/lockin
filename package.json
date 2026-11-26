@@ -1,0 +1,25 @@
+{
+  "name": "lockin",
+  "version": "1.0.0",
+  "description": "Gym accountability app with stakes",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.2.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "node-cron": "^4.6.0",
+    "sharp": "^0.35.5",
+    "web-push": "^4.0.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}
