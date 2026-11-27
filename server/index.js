@@ -82,8 +82,19 @@ function members(groupId, week) {
 function weekStats(groupId, week) {
   const wk = ensureWeek(groupId, week);
   const users = members(groupId, week);
-  const checkins = db.prepare('SELECT user_id, day, kind, status FROM checkins WHERE group_id=? AND week=?').all(groupId, week);
+  const checkins = db.prepare('SELECT user_id, day, kind, status, created_at FROM checkins WHERE group_id=? AND week=? ORDER BY created_at').all(groupId, week);
   const gym = S.gymDaysByUser(checkins);
+  // When each person reached the required number of gym days (pot tie-break).
+  const dayTimes = new Map();
+  for (const c of checkins) {
+    if (c.kind !== 'gym' || c.status !== 'ok') continue;
+    if (!dayTimes.has(c.user_id)) dayTimes.set(c.user_id, new Map());
+    if (!dayTimes.get(c.user_id).has(c.day)) dayTimes.get(c.user_id).set(c.day, c.created_at);
+  }
+  const qualifiedAt = (uid) => {
+    const times = [...(dayTimes.get(uid)?.values() || [])].sort((a, b) => a - b);
+    return times.length >= wk.rules.daysRequired ? times[wk.rules.daysRequired - 1] : null;
+  };
   const challenge = goalsFor(groupId, 0, week);
   const stats = users.map((u) => {
     const own = goalsFor(groupId, u.id, week);
@@ -94,7 +105,7 @@ function weekStats(groupId, week) {
     }
     const days = [...(gym.get(u.id) || [])].sort();
     return {
-      id: u.id, name: u.name, gymDays: days.length, days,
+      id: u.id, name: u.name, gymDays: days.length, days, qualifiedAt: qualifiedAt(u.id),
       goals: own.map((g) => ({ ...g, count: counts[g.id] || 0 })),
       challenge: challenge.map((g) => ({ ...g, count: counts[g.id] || 0 })),
       points: S.pointsFor(all, counts),
@@ -105,7 +116,7 @@ function weekStats(groupId, week) {
 
 // In favor mode, each debt line becomes one favor; use big amounts so splits never round to zero.
 function computeSettlement(stats, rules) {
-  const input = stats.map((s) => ({ id: s.id, gymDays: s.gymDays, points: s.points }));
+  const input = stats.map((s) => ({ id: s.id, gymDays: s.gymDays, points: s.points, qualifiedAt: s.qualifiedAt ?? undefined }));
   const money = rules.stakeType !== 'favors' ? S.settleWeek(input, rules) : null;
   const favors = rules.stakeType !== 'money'
     ? S.settleWeek(input, { ...rules, penaltyCents: 1e6, potCents: 1e6 }) : null;
@@ -142,7 +153,6 @@ function runSettlements() {
       const r = settleWeekIfDue(g.id, week);
       if (!r) continue;
       broadcast(g.id, 'settled');
-      const names = Object.fromEntries(r.stats.map((s) => [s.id, s.name]));
       for (const s of r.stats) {
         const res = r.out.results.find((x) => x.id === s.id);
         const owes = r.out.money.filter((d) => d.from === s.id).reduce((a, d) => a + d.amount, 0);
@@ -156,7 +166,6 @@ function runSettlements() {
         if (!owes && !favs && !res.potWinner && !gets) body += res.qualified ? 'You held the line.' : 'Nobody hit, nobody pays.';
         push.sendToUsers([s.id], { title: 'Week results are in', body, url: '/#ledger' }).catch(() => {});
       }
-      void names;
     }
   }
 }
@@ -315,14 +324,69 @@ app.get('/api/state', auth, (req, res) => {
   const history = db.prepare('SELECT week, results_json FROM weeks WHERE group_id=? AND settled_at IS NOT NULL ORDER BY week DESC LIMIT 12').all(gid)
     .map((w) => ({ week: w.week, ...JSON.parse(w.results_json) }));
   const editWeek = editWeekFor(u);
+  const feedIds = feed.map((c) => c.id);
+  const comments = db.prepare(`SELECT * FROM comments WHERE group_id=? AND ((checkin_id IS NULL AND week=?)${feedIds.length ? ` OR checkin_id IN (${feedIds.map(() => '?').join(',')})` : ''}) ORDER BY id`).all(gid, week, ...feedIds);
 
   res.json({
     me: { id: u.id, name: u.name, is_admin: !!u.is_admin, cashapp: u.cashapp, venmo: u.venmo, zelle: u.zelle },
     group: { id: gid, name: group.name, invite_code: u.is_admin ? group.invite_code : group.invite_code, rules: groupRules(gid) },
-    today: today(), week, weekDays: S.weekDays(week), rules, stats, projection, users, feed, ledger, favors, history,
+    today: today(), week, weekDays: S.weekDays(week), rules, stats, projection, users, feed, comments, ledger, favors, history,
+    firstWeek: group.created_week,
     edit: { week: editWeek, isNext: editWeek !== week, goals: goalsFor(gid, u.id, editWeek), challenge: goalsFor(gid, 0, editWeek) },
     pushKey: push.publicKey,
   });
+});
+
+// One week's full picture, for the overview grid and looking back.
+app.get('/api/week/:week', auth, (req, res) => {
+  const gid = req.user.group_id;
+  const week = String(req.params.week);
+  const group = db.prepare('SELECT created_week FROM groups WHERE id=?').get(gid);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || S.weekStartOf(week) !== week || week < group.created_week || week > currentWeek()) return fail(res, 404, 'No such week');
+  const { rules, stats, settled } = weekStats(gid, week);
+  res.json({
+    week, weekDays: S.weekDays(week), rules, stats, settled,
+    projection: computeSettlement(stats, rules),
+    checkins: db.prepare('SELECT id,user_id,day,kind,goal_id,file,thumb,mime,note,status,created_at FROM checkins WHERE group_id=? AND week=? ORDER BY created_at').all(gid, week),
+    chat: db.prepare('SELECT * FROM comments WHERE group_id=? AND week=? AND checkin_id IS NULL ORDER BY id').all(gid, week),
+    ledger: db.prepare('SELECT * FROM ledger WHERE group_id=? AND week=? ORDER BY id').all(gid, week),
+  });
+});
+
+// ---------- comments ----------
+app.post('/api/comments', auth, (req, res) => {
+  const u = req.user;
+  const text = clean(req.body.text, 500);
+  if (!text) return fail(res, 400, 'Write something');
+  const week = currentWeek();
+  const everyone = () => db.prepare('SELECT id FROM users WHERE group_id=? AND active=1 AND id<>?').all(u.group_id, u.id).map((m) => m.id);
+  if (req.body.checkin_id) {
+    const c = db.prepare('SELECT * FROM checkins WHERE id=? AND group_id=?').get(req.body.checkin_id, u.group_id);
+    if (!c) return fail(res, 404, 'Post not found');
+    db.prepare('INSERT INTO comments(group_id,checkin_id,week,user_id,text,created_at) VALUES(?,?,?,?,?,?)').run(u.group_id, c.id, c.week, u.id, text, now());
+    const thread = db.prepare('SELECT DISTINCT user_id FROM comments WHERE checkin_id=?').all(c.id).map((r) => r.user_id);
+    const to = [...new Set([c.user_id, ...thread])].filter((id) => id !== u.id);
+    const owner = db.prepare('SELECT name FROM users WHERE id=?').get(c.user_id)?.name;
+    push.sendToUsers(to.filter((id) => id === c.user_id), { title: `${u.name} commented on your post`, body: text, url: `/#feed-${c.id}` }).catch(() => {});
+    push.sendToUsers(to.filter((id) => id !== c.user_id), { title: `${u.name} replied on ${owner}'s post`, body: text, url: `/#feed-${c.id}` }).catch(() => {});
+  } else {
+    db.prepare('INSERT INTO comments(group_id,checkin_id,week,user_id,text,created_at) VALUES(?,NULL,?,?,?,?)').run(u.group_id, week, u.id, text, now());
+    push.sendToUsers(everyone(), { title: `${u.name} in the group chat`, body: text, url: '/#board-chat' }).catch(() => {});
+  }
+  broadcast(u.group_id, 'comments');
+  res.json({ ok: true });
+});
+
+app.delete('/api/comments/:id', auth, (req, res) => {
+  db.prepare('DELETE FROM comments WHERE id=? AND user_id=? AND group_id=?').run(req.params.id, req.user.id, req.user.group_id);
+  broadcast(req.user.group_id, 'comments');
+  res.json({ ok: true });
+});
+
+// App opened: reset the app-icon badge count.
+app.post('/api/seen', auth, (req, res) => {
+  db.prepare('UPDATE users SET unseen=0 WHERE id=?').run(req.user.id);
+  res.json({ ok: true });
 });
 
 app.get('/api/stream', auth, (req, res) => {
@@ -393,6 +457,9 @@ app.post('/api/checkins', auth, upload.single('file'), async (req, res) => {
       body: `${mine.gymDays}/${rules.daysRequired} this week${hadGymToday ? ' (extra post today)' : ''}${req.body.note ? ` — "${clean(req.body.note, 80)}"` : ''}`,
       url: `/#feed-${id}`, image: thumb ? `/media/${thumb}` : undefined,
     }).catch(() => {});
+    if (!hadGymToday && mine.gymDays === rules.daysRequired) {
+      push.sendToUsers(others, { title: `${u.name} is locked in 🔒`, body: `${rules.daysRequired}/${rules.daysRequired} gym days done. Are you?`, url: '/#board' }).catch(() => {});
+    }
   } else {
     push.sendToUsers(others, { title: `${u.name} posted proof`, body: clean(req.body.note, 100) || 'New bonus-goal proof', url: `/#feed-${id}` }).catch(() => {});
   }
@@ -433,6 +500,7 @@ app.delete('/api/checkins/:id', auth, (req, res) => {
   if (c.day !== today()) return fail(res, 400, 'You can only delete today’s posts');
   db.prepare('DELETE FROM checkins WHERE id=?').run(c.id);
   db.prepare('DELETE FROM reactions WHERE checkin_id=?').run(c.id);
+  db.prepare('DELETE FROM comments WHERE checkin_id=?').run(c.id);
   for (const f of [c.file, c.thumb]) if (f) fs.unlink(path.join(UPLOAD_DIR, f), () => {});
   broadcast(c.group_id, 'feed');
   res.json({ ok: true });
@@ -444,7 +512,10 @@ app.post('/api/checkins/:id/react', auth, (req, res) => {
   if (!emoji) return fail(res, 400, 'Bad emoji');
   const exists = db.prepare('SELECT 1 FROM reactions WHERE checkin_id=? AND user_id=? AND emoji=?').get(c.id, req.user.id, emoji);
   if (exists) db.prepare('DELETE FROM reactions WHERE checkin_id=? AND user_id=? AND emoji=?').run(c.id, req.user.id, emoji);
-  else db.prepare('INSERT INTO reactions VALUES(?,?,?)').run(c.id, req.user.id, emoji);
+  else {
+    db.prepare('INSERT INTO reactions VALUES(?,?,?)').run(c.id, req.user.id, emoji);
+    if (c.user_id !== req.user.id) push.sendToUsers([c.user_id], { title: `${req.user.name} reacted ${emoji}`, body: 'to your post', url: `/#feed-${c.id}` }).catch(() => {});
+  }
   broadcast(c.group_id, 'feed');
   res.json({ ok: true });
 });

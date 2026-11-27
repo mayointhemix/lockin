@@ -40,17 +40,46 @@ test('3 people, one misses: penalty split $75/$75', () => {
   assert.deepEqual(s.netDebts(debts), [{ from: 3, to: 2, amount: 12500 }, { from: 3, to: 1, amount: 5000 }]);
 });
 
-test('points tie splits the pot', () => {
+test('points tie with nothing to break it splits the pot', () => {
   const { debts } = s.settleWeek([
     { id: 1, gymDays: 5, points: 30 }, { id: 2, gymDays: 5, points: 30 }, { id: 3, gymDays: 5, points: 10 },
   ], rules);
   assert.deepEqual(debts.map((d) => [d.from, d.to, d.amount]), [[3, 1, 1250], [3, 2, 1250]]);
 });
 
-test('everyone hits and ties: no pot at all', () => {
-  const { debts, results } = s.settleWeek([{ id: 1, gymDays: 5, points: 0 }, { id: 2, gymDays: 7, points: 0 }], rules);
+test('everyone hits, same points, same gym days, no timestamps: pot is split so nobody pays', () => {
+  const { debts, results } = s.settleWeek([{ id: 1, gymDays: 5, points: 0 }, { id: 2, gymDays: 5, points: 0 }], rules);
   assert.deepEqual(debts, []);
   assert.ok(results.every((r) => !r.potWinner));
+});
+
+test('tie-break 1: same points, more gym days wins the whole pot', () => {
+  const { debts, results } = s.settleWeek([{ id: 1, gymDays: 5, points: 30 }, { id: 2, gymDays: 7, points: 30 }], rules);
+  assert.deepEqual(debts, [{ from: 1, to: 2, amount: 2500, reason: 'pot' }]);
+  assert.equal(results[1].wonBy, 'gymDays');
+});
+
+test('tie-break 2: same points and gym days, first to qualify wins', () => {
+  const { debts, results } = s.settleWeek([
+    { id: 1, gymDays: 5, points: 30, qualifiedAt: 2000 }, { id: 2, gymDays: 5, points: 30, qualifiedAt: 1000 },
+  ], rules);
+  assert.deepEqual(debts, [{ from: 1, to: 2, amount: 2500, reason: 'pot' }]);
+  assert.equal(results[1].wonBy, 'first');
+});
+
+test('3 people all hit: winner collects $50 ($25 from each)', () => {
+  const { debts, results } = s.settleWeek([
+    { id: 1, gymDays: 5, points: 10 }, { id: 2, gymDays: 5, points: 40 }, { id: 3, gymDays: 6, points: 20 },
+  ], rules);
+  assert.deepEqual(debts.map((d) => [d.from, d.to, d.amount]), [[1, 2, 2500], [3, 2, 2500]]);
+  assert.equal(results[1].wonBy, 'points');
+});
+
+test('3 people, 2-way points tie broken by first to qualify; third still pays one winner $25', () => {
+  const { debts } = s.settleWeek([
+    { id: 1, gymDays: 5, points: 30, qualifiedAt: 50 }, { id: 2, gymDays: 5, points: 30, qualifiedAt: 90 }, { id: 3, gymDays: 5, points: 0, qualifiedAt: 10 },
+  ], rules);
+  assert.deepEqual(debts.map((d) => [d.from, d.to, d.amount]), [[2, 1, 2500], [3, 1, 2500]]);
 });
 
 test('odd-cent penalty split stays exact', () => {

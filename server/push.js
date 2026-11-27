@@ -22,11 +22,14 @@ function unsubscribe(endpoint) {
 
 async function sendToUsers(userIds, payload) {
   if (!userIds.length) return;
-  const subs = db.prepare(`SELECT * FROM push_subs WHERE user_id IN (${userIds.map(() => '?').join(',')})`).all(...userIds);
-  const body = JSON.stringify(payload);
+  const marks = userIds.map(() => '?').join(',');
+  db.prepare(`UPDATE users SET unseen = unseen + 1 WHERE id IN (${marks})`).run(...userIds);
+  const unseen = Object.fromEntries(db.prepare(`SELECT id, unseen FROM users WHERE id IN (${marks})`).all(...userIds).map((u) => [u.id, u.unseen]));
+  const subs = db.prepare(`SELECT * FROM push_subs WHERE user_id IN (${marks})`).all(...userIds);
   await Promise.all(subs.map(async (s) => {
     try {
-      await webpush.sendNotification(JSON.parse(s.json), body, { TTL: 60 * 60 * 12 });
+      const body = JSON.stringify({ ...payload, badge: unseen[s.user_id] || 1 });
+      await webpush.sendNotification(JSON.parse(s.json), body, { TTL: 60 * 60 * 12, urgency: 'high' });
     } catch (e) {
       if (e.statusCode === 404 || e.statusCode === 410) unsubscribe(s.endpoint);
       else console.error('push failed', e.statusCode || e.message);

@@ -60,7 +60,7 @@ function split(total, n) {
 }
 
 /**
- * members: [{id, gymDays: number, points: number}]
+ * members: [{id, gymDays: number, points: number, qualifiedAt?: ms timestamp of the post that reached daysRequired}]
  * rules: {daysRequired, penaltyCents, potCents, potQualifiedOnly}
  * returns {results: [{id, gymDays, points, qualified, potWinner}], debts: [{from,to,amount,reason}]}
  */
@@ -80,21 +80,34 @@ function settleWeek(members, rules) {
     }
   }
 
-  // Pot: only qualifiers can win; highest points wins; ties split; non-winners pay.
+  // Pot: only qualifiers can win. Tie-break: points -> gym days -> first to qualify -> split.
   if (hitters.length && potCents > 0) {
-    const top = Math.max(...hitters.map((h) => h.points));
-    const winners = hitters.filter((h) => h.points === top);
-    winners.forEach((w) => { w.potWinner = true; });
-    const payers = results.filter((r) => !r.potWinner && (!potQualifiedOnly || r.qualified));
+    let pool = hitters; let wonBy = 'points';
+    const top = Math.max(...pool.map((h) => h.points));
+    pool = pool.filter((h) => h.points === top);
+    if (pool.length > 1) {
+      const maxDays = Math.max(...pool.map((h) => h.gymDays));
+      const next = pool.filter((h) => h.gymDays === maxDays);
+      if (next.length < pool.length) wonBy = 'gymDays';
+      pool = next;
+    }
+    if (pool.length > 1 && pool.every((h) => Number.isFinite(h.qualifiedAt))) {
+      const first = Math.min(...pool.map((h) => h.qualifiedAt));
+      const next = pool.filter((h) => h.qualifiedAt === first);
+      if (next.length < pool.length) wonBy = 'first';
+      pool = next;
+    }
+    if (pool.length > 1) wonBy = 'split';
+    const winners = pool;
+    const payers = results.filter((r) => !winners.includes(r) && (!potQualifiedOnly || r.qualified));
     if (payers.length) {
+      winners.forEach((w) => { w.potWinner = true; w.wonBy = wonBy; });
       for (const p of payers) {
         split(potCents, winners.length).forEach((amt, i) => {
           if (amt > 0) debts.push({ from: p.id, to: winners[i].id, amount: amt, reason: 'pot' });
         });
       }
-    } else {
-      winners.forEach((w) => { w.potWinner = false; }); // nobody to collect from = no pot
-    }
+    } // nobody to collect from = no pot
   }
 
   return { results, debts };

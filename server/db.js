@@ -50,8 +50,17 @@ CREATE TABLE IF NOT EXISTS favors (
   id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL, author_id INTEGER NOT NULL, text TEXT NOT NULL,
   secret INTEGER DEFAULT 0, used INTEGER DEFAULT 0, created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS comments (
+  id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL, checkin_id INTEGER, -- NULL = week chat
+  week TEXT NOT NULL, user_id INTEGER NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS comments_g ON comments(group_id, week);
 CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, user_id INTEGER NOT NULL, json TEXT NOT NULL);
 `);
+
+// Lightweight migrations for columns added after first release.
+const hasCol = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+if (!hasCol('users', 'unseen')) db.exec('ALTER TABLE users ADD COLUMN unseen INTEGER NOT NULL DEFAULT 0');
 
 const getSetting = (k) => db.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value;
 const setSetting = (k, v) => db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k, v);

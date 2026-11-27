@@ -5,6 +5,8 @@ let S = null; // server state
 let tab = 'today';
 let es = null;
 let busy = false;
+let W = null; // one week's overview data (Board tab)
+let viewWeek = null; // null = current week
 
 // ---------- utils ----------
 const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -14,6 +16,8 @@ const userOf = (id) => S.users.find((u) => u.id === id) || {};
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const fmtDay = (d) => { const [y, m, dd] = d.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }); };
 const fmtTime = (ts) => new Date(ts).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+const addDays = (d, n) => { const [y, m, dd] = d.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd + n)).toISOString().slice(0, 10); };
+const media = (f) => `/media/${encodeURIComponent(f)}`;
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
 
@@ -34,7 +38,7 @@ async function api(path, opts = {}) {
 const post = (p, body) => api(p, { method: 'POST', body: body || {} });
 
 async function act(fn, okMsg) {
-  try { const r = await fn(); if (okMsg) toast(okMsg); await refresh(); return r; } catch (e) { toast(e.message); return null; }
+  try { const r = await fn(); if (okMsg) toast(okMsg); document.activeElement?.blur?.(); await refresh(); return r; } catch (e) { toast(e.message); return null; }
 }
 
 // ---------- boot ----------
@@ -44,6 +48,7 @@ async function boot() {
   try {
     S = await api('/api/state');
     lsSet('li_code', S.group.invite_code);
+    markSeen();
     if (m) history.replaceState(null, '', '/');
     startStream();
     route();
@@ -58,7 +63,17 @@ async function boot() {
 }
 
 async function refresh() {
-  try { S = await api('/api/state'); render(); } catch (e) { if (e.status === 401) location.reload(); }
+  try { S = await api('/api/state'); if (tab === 'board') await loadWeek(); render(); } catch (e) { if (e.status === 401) location.reload(); }
+}
+
+async function loadWeek() {
+  try { W = await api(`/api/week/${viewWeek || S.week}`); } catch { viewWeek = null; W = await api(`/api/week/${S.week}`); }
+}
+
+// App is open: clear the red badge on the home-screen icon.
+function markSeen() {
+  post('/api/seen').catch(() => {});
+  try { if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {}); } catch { /* unsupported */ }
 }
 
 function startStream() {
@@ -67,14 +82,17 @@ function startStream() {
   let t;
   es.onmessage = () => { clearTimeout(t); t = setTimeout(() => { if (!busy) refresh(); }, 250); };
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S) refresh(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S) { markSeen(); refresh(); } });
 
 function route() {
   const hsh = location.hash.slice(1) || 'today';
   tab = hsh.split('-')[0];
   if (!['today', 'board', 'feed', 'ledger', 'settings'].includes(tab)) tab = 'today';
-  render();
-  if (hsh.startsWith('feed-')) setTimeout(() => document.getElementById(hsh)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  const after = () => {
+    render();
+    if (hsh.includes('-')) setTimeout(() => document.getElementById(hsh)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
+  };
+  if (tab === 'board') loadWeek().then(after); else after();
 }
 window.addEventListener('hashchange', () => { if (S) route(); });
 
@@ -172,6 +190,42 @@ function goalRow(g, mine) {
   </div>`;
 }
 
+function resultCard() {
+  const w = S.history[0];
+  if (!w || lsGet(`li_result_${S.group.id}`) === w.week) return '';
+  const winners = w.results.filter((x) => x.potWinner).map((x) => nameOf(x.id));
+  const mine = S.ledger.filter((l) => l.week === w.week && l.status === 'open' && (l.from_id === S.me.id || l.to_id === S.me.id));
+  const what = (l) => (l.kind === 'money' ? `<b class="mono">${money(l.amount_cents)}</b>` : 'a favor');
+  return `<div class="card result">
+    <p class="eyebrow">Week of ${fmtDay(w.week)} · final</p>
+    <h3>${winners.length ? `👑 ${winners.map(h).join(' & ')} won the pot` : 'No pot winner this week'}</h3>
+    ${w.results.map((x) => `<div class="row between small"><span>${h(nameOf(x.id))}</span><span class="mono">${x.gymDays} gym · ${x.points} pts ${x.qualified ? '✅' : '❌'}</span></div>`).join('')}
+    <hr>
+    ${mine.length ? mine.map((l) => `<p>${l.from_id === S.me.id ? `You owe ${h(nameOf(l.to_id))} ${what(l)}` : `${h(nameOf(l.from_id))} owes you ${what(l)}`}</p>`).join('') : '<p>You’re all square.</p>'}
+    <div class="paybtns">${mine.length ? '<a class="btn primary" href="#ledger" data-dismiss-result="' + w.week + '">Settle up</a>' : ''}<button data-dismiss-result="${w.week}">Got it</button></div>
+  </div>`;
+}
+
+function newGoalForm(isChallenge) {
+  return `<form class="newGoal" data-challenge="${isChallenge ? 1 : ''}">
+    <input name="title" placeholder="${isChallenge ? 'e.g. 10k steps a day' : 'e.g. Film short-form reels'}" aria-label="Goal name" maxlength="60" required>
+    <div class="grid2" style="margin-top:6px"><div><label style="margin-top:0">Target this week</label><input name="target" type="number" min="1" value="1" inputmode="numeric"></div>
+    <div><label style="margin-top:0">Points when hit</label><input name="points" type="number" min="0" value="10" inputmode="numeric"></div></div>
+    <button class="primary full" style="margin-top:10px">Add</button>
+  </form>`;
+}
+
+function wireNewGoal() {
+  document.querySelectorAll('.newGoal').forEach((f) => {
+    f.onsubmit = (ev) => {
+      ev.preventDefault();
+      const d = Object.fromEntries(new FormData(f)); d.challenge = !!f.dataset.challenge;
+      f.reset();
+      act(() => post('/api/goals', d), S.edit.isNext ? 'Added — starts next week' : 'Added');
+    };
+  });
+}
+
 function renderToday() {
   const m = me();
   const r = S.rules;
@@ -184,6 +238,7 @@ function renderToday() {
   $app.innerHTML = `
     <div class="topbar"><div><p class="eyebrow">${h(S.group.name)}</p><h1>Hey ${h(S.me.name)}</h1></div></div>
     <p class="muted">Week of ${fmtDay(S.week)} · ${stakesLine(r)}</p>
+    ${resultCard()}
     <div class="card">
       <div class="row between"><h3>Gym</h3>${status}</div>
       <div><span class="big">${m.gymDays}</span> <span class="of">/ ${r.daysRequired} days</span></div>
@@ -199,7 +254,13 @@ function renderToday() {
     </div>
     <h2>Bonus points <span class="mono muted" style="font-size:16px">${m.points} pts</span></h2>
     ${r.stakeType !== 'favors' ? `<p class="muted small">Hit ${r.daysRequired} gym days to be eligible. Most points wins the ${money(r.potCents)} pot.</p>` : '<p class="muted small">Hit your gym days to be eligible. Most points wins.</p>'}
-    <div class="card">${m.goals.length ? m.goals.map((g) => goalRow(g, true)).join('') : `<p class="muted">No bonus goals yet. <a href="#settings">Add some</a> — each one earns points when you hit its target.</p>`}</div>
+    <div class="card">
+      ${m.goals.length ? m.goals.map((g) => goalRow(g, true)).join('') : '<p class="muted">No bonus goals yet. Add your own below — each one earns points when you hit its target.</p>'}
+      <details ${m.goals.length ? '' : 'open'} style="margin-top:8px"><summary>+ Add a bonus goal</summary>
+        ${newGoalForm(false)}
+        <p class="muted small">${S.edit.isNext ? 'This week’s goals are locked, so a new goal starts next Monday.' : 'You can add or change this week’s goals until Tuesday 12am ET.'} Edit or remove goals in <a href="#settings">Settings</a>.</p>
+      </details>
+    </div>
     ${m.challenge.length ? `<h2>Group challenge</h2><div class="card">${m.challenge.map((g) => goalRow(g, true)).join('')}</div>` : ''}
     <input type="file" id="proofFile" accept="image/*,video/*" hidden>`;
 
@@ -207,7 +268,9 @@ function renderToday() {
   document.getElementById('gymBtn').onclick = () => file.click();
   file.onchange = () => { if (file.files[0]) { document.getElementById('gymExtra').hidden = false; document.getElementById('gymBtn').textContent = `📎 ${file.files[0].name.slice(0, 28)} — change`; document.getElementById('gymNote').focus(); } };
   document.getElementById('gymSend').onclick = () => uploadCheckin(file.files[0], 'gym', null, document.getElementById('gymNote').value);
+  document.querySelectorAll('[data-dismiss-result]').forEach((b) => { b.addEventListener('click', () => { lsSet(`li_result_${S.group.id}`, b.dataset.dismissResult); if (b.tagName === 'BUTTON') render(); }); });
   wireGoals();
+  wireNewGoal();
 }
 
 function wireGoals() {
@@ -239,8 +302,8 @@ function uploadCheckin(f, kind, goalId, note) {
   xhr.open('POST', '/api/checkins'); xhr.send(fd);
 }
 
-function projectionLines() {
-  const p = S.projection; const lines = [];
+function projectionLines(p) {
+  const lines = [];
   for (const d of p.money) lines.push(`${h(nameOf(d.from))} → ${h(nameOf(d.to))}: <b class="mono">${money(d.amount)}</b>`);
   const fav = {};
   for (const d of p.favors) { const k = `${d.from}>${d.to}`; fav[k] = (fav[k] || 0) + 1; }
@@ -248,32 +311,112 @@ function projectionLines() {
   return lines;
 }
 
+function cmtForm(checkinId) {
+  return `<form class="cmtform" data-checkin="${checkinId || ''}"><input name="text" maxlength="500" placeholder="${checkinId ? 'Add a comment…' : 'Message the group…'}" aria-label="${checkinId ? 'Comment' : 'Group message'}" autocomplete="off" required><button class="primary">Send</button></form>`;
+}
+function wireComments() {
+  document.querySelectorAll('.cmtform').forEach((f) => {
+    f.onsubmit = (ev) => {
+      ev.preventDefault();
+      const inp = f.querySelector('input'); const text = inp.value.trim();
+      if (!text) return;
+      inp.value = '';
+      act(() => post('/api/comments', { text, checkin_id: f.dataset.checkin ? Number(f.dataset.checkin) : null }));
+    };
+  });
+  document.querySelectorAll('[data-delcmt]').forEach((b) => { b.onclick = () => act(() => api(`/api/comments/${b.dataset.delcmt}`, { method: 'DELETE' })); });
+}
+function chatCard(list, canPost) {
+  return `<h2 id="board-chat">Week chat</h2><div class="card"><div class="chat">${list.length
+    ? list.map((x) => `<div class="bubble ${x.user_id === S.me.id ? 'me' : ''}">${x.user_id !== S.me.id ? `<small>${h(nameOf(x.user_id))}</small>` : ''}${h(x.text)}</div>`).join('')
+    : '<p class="muted">No messages yet. Talk your talk.</p>'}</div>${canPost ? cmtForm(null) : ''}</div>`;
+}
+
+// One square in the week grid / proof strip.
+function cellHtml(posts, label, extra = '') {
+  if (!posts.length) return `<div class="cell ${extra}" aria-label="${h(label)}: nothing"></div>`;
+  const c = posts.find((x) => x.status === 'ok') || posts[0];
+  const vid = c.mime.startsWith('video/');
+  const flagged = c.status !== 'ok';
+  return `<button class="cell ${flagged ? 'flag' : 'hit'} ${extra}" data-open="${c.id}" aria-label="${h(label)}: open post" ${c.thumb ? `style="background-image:url('${media(c.thumb)}')"` : ''}>${vid ? '▶' : (c.thumb ? '' : '✓')}${flagged ? '<em>🚩</em>' : (posts.length > 1 ? `<em>×${posts.length}</em>` : '')}</button>`;
+}
+
+function openPost(id) {
+  const c = W.checkins.find((x) => x.id === id); if (!c) return;
+  const vid = c.mime.startsWith('video/');
+  const el = document.createElement('div'); el.className = 'scrim';
+  el.innerHTML = `<div class="sheet" role="dialog" aria-label="Post">
+    <div class="row between" style="margin-bottom:10px"><div><b>${h(nameOf(c.user_id))}</b> <span class="muted small">${c.kind === 'gym' ? '🏋️ gym' : '📸 proof'} · ${fmtTime(c.created_at)}</span></div><button class="round" data-close aria-label="Close">✕</button></div>
+    ${vid ? `<video src="${media(c.file)}" controls playsinline autoplay></video>` : `<img src="${media(c.file)}" alt="post">`}
+    ${c.note ? `<p>${h(c.note)}</p>` : ''}
+    ${c.status === 'flagged' ? '<div class="flagbox">🚩 Flagged — doesn’t count until cleared.</div>' : ''}${c.status === 'rejected' ? '<div class="flagbox">❌ Rejected — doesn’t count.</div>' : ''}
+    ${S.feed.some((x) => x.id === c.id) ? `<a class="btn full" style="margin-top:12px" href="#feed-${c.id}" data-close>Comment or react in Feed</a>` : ''}
+  </div>`;
+  el.addEventListener('click', (ev) => { if (ev.target === el || ev.target.closest('[data-close]')) el.remove(); });
+  document.body.appendChild(el);
+}
+
 function renderBoard() {
-  const r = S.rules;
-  const sorted = [...S.stats].sort((a, b) => (b.gymDays >= r.daysRequired) - (a.gymDays >= r.daysRequired) || b.points - a.points);
-  const res = Object.fromEntries(S.projection.results.map((x) => [x.id, x]));
-  const lines = projectionLines();
-  const left = 7 - S.weekDays.indexOf(S.today);
+  if (!W) { $app.innerHTML = '<div class="loading">Loading…</div>'; return; }
+  const r = W.rules;
+  const current = W.week === S.week;
+  const res = Object.fromEntries(W.projection.results.map((x) => [x.id, x]));
+  const sorted = [...W.stats].sort((a, b) => (res[b.id]?.potWinner ? 1 : 0) - (res[a.id]?.potWinner ? 1 : 0) || (b.gymDays >= r.daysRequired) - (a.gymDays >= r.daysRequired) || b.points - a.points || b.gymDays - a.gymDays);
+  const left = 7 - W.weekDays.indexOf(S.today);
+  const lead = (x) => {
+    if (!x?.potWinner) return '';
+    const why = { points: 'on points', gymDays: 'tied on points · more gym days', first: `tied · got to ${r.daysRequired} first`, split: 'tied · splitting the pot' }[x.wonBy] || '';
+    return `<span class="pill warn">👑 ${current ? 'Leading' : 'Won'} ${why}</span>`;
+  };
+  const gymPosts = (uid, d) => W.checkins.filter((c) => c.user_id === uid && c.day === d && c.kind === 'gym');
+  const final = W.ledger.map((l) => `<p>${l.status === 'done' ? '✓' : '•'} ${h(nameOf(l.from_id))} → ${h(nameOf(l.to_id))}: ${l.kind === 'money' ? `<b class="mono">${money(l.amount_cents)}</b>` : `a favor${l.favor_text ? ` — ${h(l.favor_text)}` : ''}`} <span class="muted small">${l.status === 'done' ? 'settled' : 'open'}</span></p>`);
+  const lines = projectionLines(W.projection);
+
   $app.innerHTML = `
-    <p class="eyebrow">This week’s scoreboard</p><h1>Who’s locked in</h1>
-    <p class="muted">${fmtDay(S.week)} – ${fmtDay(S.weekDays[6])}, ET · ${left} day${left > 1 ? 's' : ''} left · resets Monday</p>
+    <p class="eyebrow">${current ? 'This week’s competition' : 'Looking back'}</p><h1>${current ? 'Who’s locked in' : `Week of ${fmtDay(W.week)}`}</h1>
+    <div class="picker"><button class="round" id="wkPrev" aria-label="Previous week" ${W.week <= S.firstWeek ? 'disabled' : ''}>‹</button>
+      <b>${fmtDay(W.week)} – ${fmtDay(W.weekDays[6])}</b>
+      <button class="round" id="wkNext" aria-label="Next week" ${current ? 'disabled' : ''}>›</button></div>
+    <p class="muted small">${current ? `${left} day${left > 1 ? 's' : ''} left · resets Monday 12am ET` : (W.settled ? 'Final' : 'Settling shortly')} · ${stakesLine(r)}</p>
+
+    <div class="card">
+      <div class="row between"><h3>The week at a glance</h3><span class="muted small">tap a square</span></div>
+      <div class="wk head">${W.weekDays.map((d, i) => `<span class="${d === S.today ? 'now' : ''}">${DOW[i]}</span>`).join('')}</div>
+      ${sorted.map((s) => `<div class="wkrow">
+        <div class="who"><b>${h(s.name)}${s.id === S.me.id ? ' <span class="pill acc">You</span>' : ''}</b><span class="mono muted">${s.gymDays}/${r.daysRequired} · ${s.points} pts</span></div>
+        <div class="wk">${W.weekDays.map((d, i) => cellHtml(gymPosts(s.id, d), `${s.name} ${DOW[i]}`, `${d > S.today ? 'future' : ''} ${d === S.today ? 'today' : ''}`)).join('')}</div>
+      </div>`).join('')}
+    </div>
+
     ${sorted.map((s) => {
       const q = s.gymDays >= r.daysRequired;
+      const proofs = W.checkins.filter((c) => c.user_id === s.id && c.kind === 'proof');
+      const goals = [...s.goals, ...s.challenge];
       return `<div class="card">
         <div class="row between"><div class="row"><h3 style="margin:0">${h(s.name)}</h3>${s.id === S.me.id ? '<span class="pill acc">You</span>' : ''}</div>
           <div><span class="big" style="font-size:30px">${s.points}</span> <span class="of">pts</span></div></div>
-        <div class="row between" style="margin-top:10px"><span>Gym</span><span class="count mono">${s.gymDays} / ${r.daysRequired}</span></div>
+        <div class="row between" style="margin-top:10px"><span>Gym</span><span class="count">${s.gymDays} / ${r.daysRequired}</span></div>
         <div class="bar ${q ? 'done' : ''}"><i style="width:${Math.min(100, (s.gymDays / r.daysRequired) * 100)}%"></i></div>
-        <div class="row" style="gap:6px;margin-top:8px">${q ? '<span class="pill good">Eligible for pot</span>' : '<span class="pill bad">Not eligible yet</span>'}${res[s.id]?.potWinner ? '<span class="pill warn">👑 Leading</span>' : ''}</div>
-        ${s.goals.length || s.challenge.length ? `<details style="margin-top:8px"><summary>${s.goals.length + s.challenge.length} bonus goals</summary>${[...s.goals, ...s.challenge].map((g) => goalRow(g, false)).join('')}</details>` : ''}
+        <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">${q ? '<span class="pill good">Eligible for pot</span>' : `<span class="pill bad">${current ? 'Not eligible yet' : 'Missed'}</span>`}${lead(res[s.id])}</div>
+        ${goals.length ? `<div style="margin-top:10px">${goals.map((g) => goalRow(g, false)).join('')}</div>` : '<p class="muted small" style="margin-top:10px">No bonus goals this week.</p>'}
+        ${proofs.length ? `<p class="muted small" style="margin-top:8px">Proof posted</p><div class="proofs">${proofs.map((c) => cellHtml([c], `${s.name} proof`)).join('')}</div>` : ''}
       </div>`;
     }).join('')}
-    <h2>If the week ended now</h2>
-    <div class="card">${lines.length ? lines.map((l) => `<p>${l}</p>`).join('') : '<p class="muted">Nobody owes anything yet.</p>'}
-      <p class="muted small" style="margin-top:10px">Miss ${r.daysRequired} gym days → ${r.stakeType !== 'favors' ? `${money(r.penaltyCents)} split among those who hit` : 'you owe each person who hit a favor'}. Most points among eligible → ${r.stakeType !== 'favors' ? `${money(r.potCents)} from everyone else${r.potQualifiedOnly ? ' who was eligible' : ''}` : 'a favor from everyone else'}${r.stakeType === 'both' ? ' (plus favors)' : ''}. Ties split.</p>
+
+    <h2>${W.settled ? 'Final result' : 'If the week ended now'}</h2>
+    <div class="card">${W.settled
+      ? (final.length ? final.join('') : '<p class="muted">Nobody owed anything that week.</p>')
+      : (lines.length ? lines.map((l) => `<p>${l}</p>`).join('') : '<p class="muted">Nobody owes anything yet.</p>')}
+      <p class="muted small" style="margin-top:10px">Miss ${r.daysRequired} gym days → ${r.stakeType !== 'favors' ? `${money(r.penaltyCents)} split among those who hit` : 'you owe each person who hit a favor'}. Most points among eligible → ${r.stakeType !== 'favors' ? `${money(r.potCents)} from everyone else${r.potQualifiedOnly ? ' who was eligible' : ''}` : 'a favor from everyone else'}${r.stakeType === 'both' ? ' (plus favors)' : ''}. Tie-break: more gym days, then whoever got to ${r.daysRequired} first.</p>
     </div>
-    ${S.history.length ? `<h2>Past weeks</h2>${S.history.map((w) => `<div class="card tight"><div class="row between"><b>Week of ${fmtDay(w.week)}</b></div>
-      ${w.results.map((x) => `<div class="row between small"><span>${h(nameOf(x.id))} ${x.potWinner ? '👑' : ''}</span><span class="mono">${x.gymDays} gym · ${x.points} pts ${x.qualified ? '✅' : '❌'}</span></div>`).join('')}</div>`).join('')}` : ''}`;
+    ${chatCard(W.chat, current)}`;
+
+  const go = (n) => { const next = addDays(W.week, n); viewWeek = next === S.week ? null : next; loadWeek().then(() => { render(); window.scrollTo(0, 0); }); };
+  document.getElementById('wkPrev').onclick = () => go(-7);
+  document.getElementById('wkNext').onclick = () => go(7);
+  document.querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openPost(Number(b.dataset.open)); });
+  const chat = document.querySelector('.chat'); if (chat) chat.scrollTop = chat.scrollHeight;
+  wireComments();
 }
 
 function renderFeed() {
@@ -284,6 +427,7 @@ function renderFeed() {
     b.onclick = () => { const reason = prompt('Why doesn’t this count? (they’ll see this)'); if (reason !== null) act(() => post(`/api/checkins/${b.dataset.flag}/flag`, { reason }), 'Flagged'); };
   });
   document.querySelectorAll('[data-resolve]').forEach((b) => { b.onclick = () => act(() => post(`/api/checkins/${b.dataset.resolve}/resolve`, { action: b.dataset.a }), 'Done'); });
+  wireComments();
   document.querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => { if (confirm('Delete this post?')) act(() => api(`/api/checkins/${b.dataset.del}`, { method: 'DELETE' }), 'Deleted'); }; });
 }
 
@@ -292,12 +436,13 @@ function postCard(c) {
   const goal = c.kind === 'proof' ? [...S.stats.flatMap((s) => [...s.goals, ...s.challenge])].find((g) => g.id === c.goal_id) : null;
   const counts = {};
   for (const r of c.reactions) counts[r.emoji] = (counts[r.emoji] || []).concat(r.user_id);
+  const cmts = S.comments.filter((x) => x.checkin_id === c.id);
   const canResolve = c.status === 'flagged' && (c.flagged_by === S.me.id || (S.me.is_admin && c.user_id !== S.me.id));
   return `<div class="card post" id="feed-${c.id}">
     <div class="row between"><div><b>${h(nameOf(c.user_id))}</b> <span class="muted small">${c.kind === 'gym' ? '🏋️ gym' : `📸 ${h(goal?.title || 'bonus proof')}`}</span></div>
       <span class="muted small">${fmtTime(c.created_at)}</span></div>
-    <div class="media">${isVid ? `<video src="/media/${h(c.file)}" controls playsinline preload="metadata"></video>`
-      : `<a href="/media/${h(c.file)}" target="_blank"><img src="/media/${h(c.thumb || c.file)}" loading="lazy" alt="check-in photo"></a>`}</div>
+    <div class="media">${isVid ? `<video src="${media(c.file)}" controls playsinline preload="metadata"></video>`
+      : `<a href="${media(c.file)}" target="_blank"><img src="${media(c.thumb || c.file)}" loading="lazy" alt="check-in photo"></a>`}</div>
     ${c.note ? `<p>${h(c.note)}</p>` : ''}
     ${c.status === 'flagged' ? `<div class="flagbox">🚩 Flagged by ${h(nameOf(c.flagged_by))}${c.flag_reason ? `: “${h(c.flag_reason)}”` : ''}. Doesn't count until cleared.
       ${canResolve ? `<div class="row" style="margin-top:8px"><button class="small" data-resolve="${c.id}" data-a="clear">Clear it</button>${S.me.is_admin ? `<button class="small danger" data-resolve="${c.id}" data-a="reject">Reject</button>` : ''}</div>` : ''}</div>` : ''}
@@ -307,6 +452,8 @@ function postCard(c) {
       ${c.user_id !== S.me.id && c.status === 'ok' && c.kind === 'gym' ? `<button class="ghost small danger" data-flag="${c.id}">🚩 Doesn’t count</button>` : ''}
       ${c.user_id === S.me.id && c.day === S.today ? `<button class="ghost small" data-del="${c.id}">Delete</button>` : ''}
     </div>
+    ${cmts.length ? `<hr style="margin:10px 0 4px">${cmts.map((x) => `<div class="cmt"><b>${h(nameOf(x.user_id))}</b><span class="grow">${h(x.text)}</span><time>${fmtTime(x.created_at)}</time>${x.user_id === S.me.id ? `<button class="ghost small" data-delcmt="${x.id}" aria-label="Delete comment">✕</button>` : ''}</div>`).join('')}` : ''}
+    ${cmtForm(c.id)}
   </div>`;
 }
 
@@ -390,13 +537,7 @@ function goalEditor(list, isChallenge) {
       <div><label style="margin-top:0">Points</label><input name="points" type="number" min="0" value="${g.points}" inputmode="numeric"></div></div>
       <div class="row between" style="margin-top:6px"><button class="ghost small danger" type="button" data-delgoal="${g.id}">Remove</button><button class="small">Save</button></div>
     </form></div>`).join('')}
-    <details ${list.length ? '' : 'open'}><summary>+ Add ${isChallenge ? 'challenge' : 'goal'}</summary>
-      <form class="newGoal" data-challenge="${isChallenge ? 1 : ''}">
-        <input name="title" placeholder="${isChallenge ? 'e.g. 10k steps a day' : 'e.g. Film short-form reels'}" maxlength="60" required>
-        <div class="grid2" style="margin-top:6px"><div><label style="margin-top:0">Target this week</label><input name="target" type="number" min="1" value="1" inputmode="numeric"></div>
-        <div><label style="margin-top:0">Points when hit</label><input name="points" type="number" min="0" value="10" inputmode="numeric"></div></div>
-        <button class="primary full" style="margin-top:10px">Add</button>
-      </form></details>`;
+    <details ${list.length ? '' : 'open'}><summary>+ Add ${isChallenge ? 'challenge' : 'goal'}</summary>${newGoalForm(isChallenge)}</details>`;
 }
 
 function renderSettings() {
@@ -412,7 +553,8 @@ function renderSettings() {
     <div class="card" id="pushCard">${isIOS && !standalone
       ? '<p>On iPhone, first add this to your Home Screen: tap <b>Share</b> → <b>Add to Home Screen</b>, then open Lock In from there and come back here.</p>'
       : `<p class="muted small">Get pinged when someone posts, when you’re flagged, daily 7pm reminders if you haven’t gone, and Monday results.</p>
-         <button class="primary full" id="pushBtn">Turn on notifications</button><button class="ghost small" id="pushTest">Send me a test</button>`}</div>
+         <button class="primary full" id="pushBtn">Turn on notifications</button><button class="ghost small" id="pushTest">Send me a test</button>
+         <details><summary>Not getting notifications?</summary><p class="small">On iPhone: open the <b>Settings</b> app → <b>Notifications</b> → <b>Lock In</b>. Turn on <b>Allow Notifications</b>, tick <b>Lock Screen</b>, <b>Notification Centre</b> and <b>Banners</b>, and switch on <b>Sounds</b> and <b>Badges</b>. Set Banner Style to <b>Persistent</b> if you want them to stay on screen.</p><p class="small">Also check that a <b>Focus</b> mode (Do Not Disturb, Sleep, Work) isn’t silencing Lock In, and that you opened the app from the Home Screen icon, not Safari. Then tap “Turn on notifications” again and send a test.</p></details>`}</div>
 
     <h2>My bonus goals</h2>
     ${E.isNext ? `<div class="notice">This week’s goals are locked (they lock Tuesday 12am ET). Changes below start <b>next week (${fmtDay(E.week)})</b>.</div>` : '<p class="muted small">You can edit this week’s goals until Tuesday 12am ET. After that, edits apply to next week.</p>'}
@@ -484,7 +626,7 @@ function renderSettings() {
   });
   document.querySelectorAll('[data-kick]').forEach((b) => { b.onclick = () => { if (confirm('Remove this person from the group?')) act(() => api(`/api/members/${b.dataset.kick}`, { method: 'DELETE' }), 'Removed'); }; });
   document.querySelectorAll('.goalForm').forEach((f) => { f.onsubmit = (ev) => { ev.preventDefault(); act(() => api(`/api/goals/${f.dataset.id}`, { method: 'PUT', body: Object.fromEntries(new FormData(f)) }), 'Saved'); }; });
-  document.querySelectorAll('.newGoal').forEach((f) => { f.onsubmit = (ev) => { ev.preventDefault(); const d = Object.fromEntries(new FormData(f)); d.challenge = !!f.dataset.challenge; act(() => post('/api/goals', d), 'Added'); }; });
+  wireNewGoal();
   document.querySelectorAll('[data-delgoal]').forEach((b) => { b.onclick = () => { if (confirm('Remove this goal?')) act(() => api(`/api/goals/${b.dataset.delgoal}`, { method: 'DELETE' }), 'Removed'); }; });
   document.getElementById('logout').onclick = async () => { await post('/api/logout'); location.reload(); };
 }
