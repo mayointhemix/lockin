@@ -236,11 +236,11 @@ function renderToday() {
     : need > left ? '<span class="pill bad">Can’t make it this week</span>'
       : need === left ? '<span class="pill warn">No days to spare</span>' : `<span class="pill">${need} to go · ${left} days left</span>`;
   $app.innerHTML = `
-    <div class="topbar"><div><p class="eyebrow">${h(S.group.name)}</p><h1>Hey ${h(S.me.name)}</h1></div></div>
+    <div class="topbar"><div><p class="eyebrow">${h(S.group.name)}</p><h1>Hey, <span class="accent">${h(S.me.name)}</span></h1></div></div>
     <p class="muted">Week of ${fmtDay(S.week)} · ${stakesLine(r)}</p>
     ${resultCard()}
     <div class="card">
-      <div class="row between"><h3>Gym</h3>${status}</div>
+      <div class="row between"><h3 class="label">Gym this week</h3>${status}</div>
       <div><span class="big">${m.gymDays}</span> <span class="of">/ ${r.daysRequired} days</span></div>
       ${daysStrip(m.days)}
       ${loggedToday ? '<p class="muted small">✅ Today counts. Extra posts are welcome but count once.</p>' : '<p class="muted small">Post a photo or video at the gym. Only today counts — no backdating.</p>'}
@@ -380,7 +380,7 @@ function renderBoard() {
     <p class="muted small">${current ? `${left} day${left > 1 ? 's' : ''} left · resets Monday 12am ET` : (W.settled ? 'Final' : 'Settling shortly')} · ${stakesLine(r)}</p>
 
     <div class="card">
-      <div class="row between"><h3>The week at a glance</h3><span class="muted small">tap a square</span></div>
+      <div class="row between" style="margin-bottom:10px"><h3 class="label">The week at a glance</h3><span class="muted small">tap a square</span></div>
       <div class="wk head">${W.weekDays.map((d, i) => `<span class="${d === S.today ? 'now' : ''}">${DOW[i]}</span>`).join('')}</div>
       ${sorted.map((s) => `<div class="wkrow">
         <div class="who"><b>${h(s.name)}${s.id === S.me.id ? ' <span class="pill acc">You</span>' : ''}</b><span class="mono muted">${s.gymDays}/${r.daysRequired} · ${s.points} pts</span></div>
