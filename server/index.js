@@ -6,7 +6,7 @@ const cookieParser = require('cookie-parser');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const cron = require('node-cron');
-const { db, UPLOAD_DIR } = require('./db');
+const { db, UPLOAD_DIR, getSetting, setSetting } = require('./db');
 const S = require('./settlement');
 const push = require('./push');
 const R = require('./reminders');
@@ -222,9 +222,29 @@ function createUser(groupId, name, pin, isAdmin = 0) {
 }
 
 // ---------- routes: onboarding ----------
+// ---------- setup video ----------
+// One short video, uploaded by an admin, that shows new people how to add the app to their
+// Home Screen. It is shown before login on the join screen, so it is served without auth.
+// Returns { file, mime, v } or null. `v` changes with each upload so browsers refetch.
+function helpVideo() {
+  try {
+    const h = JSON.parse(getSetting('help_video') || 'null');
+    return h && h.file && fs.existsSync(path.join(UPLOAD_DIR, path.basename(h.file))) ? h : null;
+  } catch { return null; }
+}
+const helpVideoVersion = () => helpVideo()?.v || 0;
+
 app.get('/api/bootstrap', (req, res) => {
   const hasGroups = !!db.prepare('SELECT 1 FROM groups LIMIT 1').get();
-  res.json({ hasGroups });
+  res.json({ hasGroups, helpVideo: helpVideoVersion() });
+});
+
+app.get('/help-video', (req, res) => {
+  const h = helpVideo();
+  if (!h) return res.sendStatus(404);
+  res.set('Cache-Control', 'public, max-age=300');
+  res.type(h.mime || 'video/mp4');
+  res.sendFile(path.join(UPLOAD_DIR, path.basename(h.file)));
 });
 
 // First group can be created by anyone (fresh install). After that, only a logged-in admin.
@@ -256,7 +276,7 @@ app.get('/api/invite/:code', (req, res) => {
   const g = db.prepare('SELECT id,name FROM groups WHERE invite_code=?').get(req.params.code);
   if (!g) return fail(res, 404, 'That invite link is not valid anymore');
   const names = db.prepare('SELECT name FROM users WHERE group_id=? AND active=1 ORDER BY id').all(g.id).map((u) => u.name);
-  res.json({ groupName: g.name, names });
+  res.json({ groupName: g.name, names, helpVideo: helpVideoVersion() });
 });
 
 app.post('/api/join', (req, res) => {
@@ -368,6 +388,7 @@ app.get('/api/state', auth, (req, res) => {
     firstWeek: group.created_week,
     edit: { week: editWeek, isNext: editWeek !== week, goals: goalsFor(gid, u.id, editWeek), challenge: goalsFor(gid, 0, editWeek) },
     pushKey: push.publicKey,
+    helpVideo: helpVideoVersion(),
   });
 });
 
@@ -439,6 +460,31 @@ const upload = multer({
   dest: path.join(UPLOAD_DIR, 'tmp'),
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (req, file, cb) => cb(null, /^(image|video)\//.test(file.mimetype)),
+});
+
+function removeHelpVideoFile(h) {
+  if (h?.file) fs.unlink(path.join(UPLOAD_DIR, path.basename(h.file)), () => {});
+}
+
+app.post('/api/help-video', auth, admin, upload.single('file'), (req, res) => {
+  const f = req.file;
+  if (!f) return fail(res, 400, 'Choose a video file');
+  if (!f.mimetype.startsWith('video/')) { fs.unlink(f.path, () => {}); return fail(res, 400, 'That is not a video'); }
+  const old = helpVideo();
+  const ext = (path.extname(f.originalname || '').toLowerCase().match(/^\.[a-z0-9]{1,5}$/) || ['.mp4'])[0];
+  const file = `help-${crypto.randomBytes(8).toString('hex')}${ext}`;
+  try { fs.renameSync(f.path, path.join(UPLOAD_DIR, file)); } catch (e) { console.error(e); return fail(res, 500, 'Could not save that file'); }
+  const v = now();
+  setSetting('help_video', JSON.stringify({ file, mime: f.mimetype, v, by: req.user.id }));
+  removeHelpVideoFile(old);
+  res.json({ ok: true, helpVideo: v });
+});
+
+app.delete('/api/help-video', auth, admin, (req, res) => {
+  const old = helpVideo();
+  setSetting('help_video', 'null');
+  removeHelpVideoFile(old);
+  res.json({ ok: true });
 });
 
 app.post('/api/checkins', auth, upload.single('file'), async (req, res) => {

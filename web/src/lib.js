@@ -59,6 +59,24 @@ export function uploadCheckin({ file, kind, goalId, note, onProgress }) {
   });
 }
 
+// Admin uploads the how-to video shown to new members. Resolves with the server's JSON.
+export function uploadHelpVideo({ file, onProgress }) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error('Choose a video first'));
+    if (!file.type.startsWith('video/')) return reject(new Error('That file is not a video'));
+    if (file.size > 100 * 1024 * 1024) return reject(new Error('That video is over 100MB. Record a shorter one.'));
+    const fd = new FormData(); fd.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let d = {}; try { d = JSON.parse(xhr.responseText); } catch { /* ignore */ }
+      if (xhr.status === 200) resolve(d); else reject(new Error(d.error || 'Upload failed'));
+    };
+    xhr.onerror = () => reject(new Error('Upload failed. Check your connection.'));
+    xhr.open('POST', '/api/help-video'); xhr.send(fd);
+  });
+}
+
 // ---- phone setup: Home Screen + notifications ----
 export const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 export const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone;

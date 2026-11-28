@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Bell, Share, SquarePlus, Smartphone, Download } from 'lucide-react';
 import { canInstall, enablePush, isIOS, isStandalone, lsGet, lsSet, promptInstall, pushIsOn, pushSupported } from './lib.js';
-import { useApp } from './ui.jsx';
+import { useApp, HelpVideo } from './ui.jsx';
 
 const SNOOZE_KEY = 'li_setup_snooze';
 const SNOOZE_DAYS = 2;
@@ -49,6 +49,7 @@ export default function SetupCard() {
 
       {needHomeScreen ? (
         <>
+          {S.helpVideo ? <><p className="small"><b>Watch how:</b></p><HelpVideo v={S.helpVideo} /></> : null}
           <ol className="steps">
             <li><Share size={16} aria-hidden="true" /><span>Tap the <b>Share</b> button in your browser’s toolbar.</span></li>
             <li><SquarePlus size={16} aria-hidden="true" /><span>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.</span></li>

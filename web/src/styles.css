@@ -347,3 +347,6 @@ button.cell.hit, button.cell.flag { background-size: cover; background-position:
 .steps li::before { content: counter(step); flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font: 500 12px var(--mono); background: var(--accent-soft); color: var(--accent); }
 .steps li svg { flex: none; margin-top: 3px; color: var(--muted); }
 .steps li span { min-width: 0; }
+
+/* how-to video */
+.help-video { display: block; width: 100%; max-height: 60vh; border-radius: 16px; border: 1px solid var(--line); background: #000; }

@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { del, enablePush, fmtDay, formData, isIOS, isStandalone, post, put, stakesLine } from './lib.js';
-import { useApp, NewGoalForm } from './ui.jsx';
+import { del, enablePush, fmtDay, formData, isIOS, isStandalone, post, put, stakesLine, uploadHelpVideo } from './lib.js';
+import { useApp, NewGoalForm, HelpVideo } from './ui.jsx';
 
 function GoalEditor({ list, isChallenge }) {
   const { act, ask } = useApp();
@@ -20,6 +20,34 @@ function GoalEditor({ list, isChallenge }) {
       ))}
       <details open={!list.length}><summary>Add {isChallenge ? 'a challenge' : 'a goal'}</summary><NewGoalForm isChallenge={isChallenge} /></details>
     </>
+  );
+}
+
+// Admin only: the how-to video new members see on the join screen and the setup card.
+function SetupVideoCard() {
+  const { S, act, ask, refresh } = useApp();
+  const input = useRef(null);
+  const [progress, setProgress] = useState(null);
+  const pick = async (e) => {
+    const file = e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    setProgress(0);
+    try { await uploadHelpVideo({ file, onProgress: setProgress }); toast.success('Setup video saved. New members will see it.'); await refresh(); } catch (err) { toast.error(err.message); }
+    setProgress(null);
+  };
+  const remove = async () => { if (await ask({ title: 'Remove the setup video?', description: 'New members will see the written steps only.', confirmLabel: 'Remove', danger: true })) act(() => del('/api/help-video'), 'Removed'); };
+  return (
+    <section className="card">
+      <div><p className="eyebrow">Setup video</p><h2>Show new members how to install</h2></div>
+      <p className="muted small">Record your iPhone screen while you add Lock In to the Home Screen and turn on notifications, then upload it here. People on iPhone see it on the join screen and on their setup card until they’ve installed the app. Keep it under a minute.</p>
+      {S.helpVideo ? <HelpVideo v={S.helpVideo} /> : <p className="notice">No video yet. New members see written steps only.</p>}
+      {progress !== null ? <div className="bar"><i style={{ width: `${Math.round(progress * 100)}%` }} /></div> : null}
+      <input ref={input} type="file" accept="video/*" hidden onChange={pick} />
+      <div className="btns">
+        <button className="btn primary" onClick={() => input.current?.click()} disabled={progress !== null}>{progress !== null ? 'Uploading…' : S.helpVideo ? 'Replace video' : 'Upload video'}</button>
+        {S.helpVideo ? <button className="btn danger" onClick={remove} disabled={progress !== null}>Remove</button> : null}
+      </div>
+    </section>
   );
 }
 
@@ -114,6 +142,7 @@ export default function Settings() {
 
       {S.me.is_admin ? (
         <>
+          <SetupVideoCard />
           <form className="card stack" onSubmit={saveRules} key={JSON.stringify([S.group.name, r])}>
             <div><p className="eyebrow">Rules</p><h2>How the group plays</h2></div>
             <label>Group name<input name="name" defaultValue={S.group.name} maxLength={60} /></label>
