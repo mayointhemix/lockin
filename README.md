@@ -11,7 +11,17 @@ Gym accountability app: post a photo or video at the gym 5 days a week or pay up
 git clone <this repo> lockin && cd lockin && sudo ./deploy/install.sh lockin.yourdomain.com
 ```
 
-The installer sets up Node, the app as a service, HTTPS (uses nginx if it is already there, otherwise Caddy), and nightly backups to `/var/backups/lockin`. Re-run it after a `git pull` to update.
+The installer sets up Node, the app as a service, HTTPS (uses nginx if it is already there, otherwise Caddy), and nightly backups to `/var/backups/lockin`.
+
+## Ship an update
+
+After the first install, updates go out with one command from your computer:
+
+```bash
+npm run deploy
+```
+
+It backs up the database, updates the server, restarts only if server code changed, checks the site, and rolls back by itself if the app stops answering. Setup and details are in [deploy/RUNBOOK.md](deploy/RUNBOOK.md).
 
 ## Run locally
 
@@ -20,6 +30,8 @@ npm install && npm start
 ```
 
 Then open http://localhost:3000. Run the tests with `npm test`.
+
+To fill a fresh local copy with example members, posts and debts, keep it running and in a second terminal run `npm run seed`. It only works against an app on your own computer that has no groups yet.
 
 ## Changing the frontend
 
