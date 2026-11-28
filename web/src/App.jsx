@@ -3,8 +3,8 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { Toaster, toast } from 'sonner';
 import { Drawer } from 'vaul';
 import { Command } from 'cmdk';
-import { Home, Trophy, Images, HandCoins, Settings as SettingsIcon, Search, Camera, Share2, Dumbbell } from 'lucide-react';
-import { api, post, lsGet, lsSet, TABS, uploadCheckin } from './lib.js';
+import { Home, Trophy, Images, HandCoins, Settings as SettingsIcon, Search, Camera, Share2, Dumbbell, ChevronsUpDown, Check, Users } from 'lucide-react';
+import { api, post, lsGet, lsSet, TABS, uploadCheckin, formData } from './lib.js';
 import { Ctx } from './ui.jsx';
 import { CreateGroup, AuthScreen } from './Auth.jsx';
 import Today from './Today.jsx';
@@ -70,6 +70,8 @@ export default function App() {
   const [gym, setGym] = useState(null); // { file, preview }
   const [gymNote, setGymNote] = useState('');
   const [progress, setProgress] = useState(null);
+  const [accounts, setAccounts] = useState([]); // this person's groups on this device
+  const [groupsOpen, setGroupsOpen] = useState(false);
 
   const askResolve = useRef(null);
   const busy = useRef(false);
@@ -106,16 +108,26 @@ export default function App() {
 
   const boot = useCallback(async () => {
     const m = window.location.pathname.match(/^\/join\/([\w-]+)/);
-    if (m) lsSet('li_code', m[1]);
     try {
       const s = await api('/api/state');
+      api('/api/accounts').then(setAccounts).catch(() => {});
+      if (m && m[1] !== s.group.invite_code) {
+        // Already logged in to one group, but this link is for a different one: offer to join or log in there.
+        try {
+          const info = await api(`/api/invite/${encodeURIComponent(m[1])}`);
+          setAuthInfo({ code: m[1], fromLink: true, info, stayIn: s.group.name });
+          setPhase('auth');
+          return;
+        } catch (err) { toast.error(`${err.message}. Staying in ${s.group.name}.`); }
+      }
       lsSet('li_code', s.group.invite_code);
-      setS(s); setView(null); setPhase('app');
+      setS(s); setW(null); setViewWeek(null); setView(null); setPhase('app');
       markSeen();
       if (m) window.history.replaceState(null, '', '/' + window.location.hash);
       setRoute(parseHash());
     } catch (e) {
       if (e.status !== 401) { setPhase('error'); return; }
+      if (m) lsSet('li_code', m[1]);
       const code = m ? m[1] : lsGet('li_code');
       try {
         if (code) {
@@ -194,6 +206,24 @@ export default function App() {
     busy.current = false; refresh();
   };
 
+  const switchGroup = async (token) => {
+    try { await post('/api/accounts/switch', { token }); } catch (e) { toast.error(e.message); return; }
+    setGroupsOpen(false); setCmdOpen(false);
+    window.location.hash = '#today'; window.scrollTo(0, 0);
+    boot();
+  };
+  const createGroup = async (ev) => {
+    ev.preventDefault();
+    const f = ev.currentTarget;
+    try {
+      await post('/api/groups', formData(f));
+      f.reset(); setGroupsOpen(false);
+      toast.success('Group created. Send the invite from Settings.');
+      window.location.hash = '#settings'; window.scrollTo(0, 0);
+      boot();
+    } catch (e) { toast.error(e.message); }
+  };
+
   const shareInvite = async () => {
     const invite = `${window.location.origin}/join/${S.group.invite_code}`;
     const data = { title: `Join ${S.group.name} on Lock In`, text: `Gym ${S.rules.daysRequired}x a week or you pay. Join here:`, url: invite };
@@ -204,7 +234,7 @@ export default function App() {
   const ctx = useMemo(() => {
     if (!S) return null;
     return {
-      S, W, viewWeek, setViewWeek, act, refresh, ask, go, boot, pickGym, pickProof, shareInvite,
+      S, W, viewWeek, setViewWeek, act, refresh, ask, go, boot, pickGym, pickProof, shareInvite, openGroups: () => setGroupsOpen(true),
       nameOf: (id) => S.users.find((u) => u.id === id)?.name || 'Former member',
       userOf: (id) => S.users.find((u) => u.id === id) || {},
     };
@@ -241,7 +271,9 @@ export default function App() {
     <Ctx.Provider value={ctx}>
       <div className="shell">
         <aside className="side">
-          <div className="brand"><span className="logo">L</span><div><b>Lock In</b><span>{S.group.name}</span></div></div>
+          <button className="brand group-btn" onClick={() => setGroupsOpen(true)} aria-label={`Group: ${S.group.name}. Switch or start a group`}>
+            <span className="logo">L</span><div><b>{S.group.name}</b><span>{accounts.length > 1 ? `${accounts.length} groups · switch` : 'Lock In · groups'}</span></div><ChevronsUpDown size={15} aria-hidden="true" />
+          </button>
           {NAV.map((g) => (
             <nav key={g.group} aria-label={g.group}>
               <p className="eyebrow">{g.group}</p>
@@ -258,6 +290,7 @@ export default function App() {
 
         <div className="main">
           <header className="top">
+            <button className="group-chip" onClick={() => setGroupsOpen(true)} aria-label={`Group: ${S.group.name}. Switch or start a group`}><Users size={14} aria-hidden="true" /><span>{S.group.name}</span><ChevronsUpDown size={13} aria-hidden="true" /></button>
             <Tabs.Root value={pillValue} onValueChange={onPill}>
               <Tabs.List className="pills" aria-label="Whose week to show">
                 <Tabs.Trigger className="pill-tab" value={String(meId)}>My view</Tabs.Trigger>
@@ -310,6 +343,11 @@ export default function App() {
               <Command.Item onSelect={() => { setCmdOpen(false); pickGym(); }}><Camera size={16} />Log today’s gym</Command.Item>
               <Command.Item onSelect={() => { setCmdOpen(false); shareInvite(); }}><Share2 size={16} />Share the invite link</Command.Item>
             </Command.Group>
+            {accounts.length > 1 ? (
+              <Command.Group heading="Switch group">
+                {accounts.filter((a) => !a.current).map((a) => <Command.Item key={a.token} value={`group ${a.group}`} onSelect={() => switchGroup(a.token)}><Users size={16} />{a.group}</Command.Item>)}
+              </Command.Group>
+            ) : null}
             <Command.Group heading="Go to">
               {FLAT_NAV.map((it) => <Command.Item key={it.id} onSelect={() => go(it.id)}><it.icon size={16} />{it.label}</Command.Item>)}
             </Command.Group>
@@ -318,6 +356,38 @@ export default function App() {
             </Command.Group>
           </Command.List>
         </Command.Dialog>
+
+        <Drawer.Root open={groupsOpen} onOpenChange={setGroupsOpen}>
+          <Drawer.Portal>
+            <Drawer.Overlay className="dw-overlay" />
+            <Drawer.Content className="dw">
+              <div className="dw-inner">
+                <div className="dw-handle" aria-hidden="true" />
+                <Drawer.Title className="dw-title">Your groups</Drawer.Title>
+                <Drawer.Description className="muted small">Each group is its own competition, with its own people, rules, feed and debts.</Drawer.Description>
+                <div className="options">
+                  {(accounts.length ? accounts : [{ token: 'current', group: S.group.name, current: true }]).map((a) => (
+                    <button key={a.token} className={`btn group-row ${a.current ? 'on' : ''}`} onClick={() => (a.current ? setGroupsOpen(false) : switchGroup(a.token))} aria-current={a.current ? 'true' : undefined}>
+                      <span>{a.group}{a.name && a.name !== S.me.name ? <span className="muted small"> · as {a.name}</span> : null}</span>{a.current ? <span className="pill acc"><Check size={12} aria-hidden="true" />You’re here</span> : <span className="muted small">Switch</span>}
+                    </button>
+                  ))}
+                </div>
+                {S.me.is_admin ? (
+                  <details open={accounts.length < 2}>
+                    <summary>Start another group</summary>
+                    <form className="stack" onSubmit={createGroup}>
+                      <p className="muted small">For example one for you and one friend, or you and your partner. You’ll be the admin and keep the same name and PIN. It gets its own invite link.</p>
+                      <input name="groupName" placeholder="Group name, e.g. Me vs John" aria-label="Group name" required maxLength={60} />
+                      <select name="stakeType" defaultValue="money" aria-label="Stakes"><option value="money">Money</option><option value="favors">Favors (no money)</option><option value="both">Money + favors</option></select>
+                      <button className="btn primary full">Create group</button>
+                    </form>
+                  </details>
+                ) : <p className="muted small">Only a group’s admin can start another group from here. To join a different group, open its invite link.</p>}
+                <p className="muted small">Groups are remembered on this device. On a new phone or browser, open each group’s invite link once and log in.</p>
+              </div>
+            </Drawer.Content>
+          </Drawer.Portal>
+        </Drawer.Root>
 
         <AskSheet cfg={askCfg} onDone={askDone} />
         {toaster}
