@@ -7,7 +7,8 @@
     "start": "node server/index.js",
     "test": "node --test",
     "build": "vite build",
-    "dev:web": "vite"
+    "dev:web": "vite",
+    "deploy": "bash deploy/deploy.sh"
   },
   "license": "UNLICENSED",
   "dependencies": {
