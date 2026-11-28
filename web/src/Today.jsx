@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import NumberFlow from '@number-flow/react';
 import { Camera, Dumbbell, Target, Trophy, Wallet, Crown } from 'lucide-react';
-import { fmtDay, greeting, isOverdue, lsGet, lsSet, money, stakesLine } from './lib.js';
+import { fmtDay, formData, greeting, isOverdue, lsGet, lsSet, money, put, stakesLine } from './lib.js';
 import { useApp, Stat, DayStrip, GoalRow, NewGoalForm, Money } from './ui.jsx';
 import SetupCard from './Setup.jsx';
 
@@ -23,6 +23,33 @@ function ResultCard() {
       {mine.length ? mine.map((l) => <p key={l.id}>{l.from_id === S.me.id ? <>You owe {nameOf(l.to_id)} {what(l)}</> : <>{nameOf(l.from_id)} owes you {what(l)}</>}</p>) : <p>You’re all square.</p>}
       <div className="btns">{mine.length ? <a className="btn primary" href="#ledger" onClick={dismiss}>Settle up</a> : null}<button className="btn" onClick={dismiss}>Got it</button></div>
     </section>
+  );
+}
+
+// In money groups, ask anyone who hasn't said how to pay them. Comes back every 2 days until done.
+function PayDetailsCard() {
+  const { S, act } = useApp();
+  const [, bump] = useState(0);
+  const moneyOn = S.group.rules.stakeType !== 'favors' || S.rules.stakeType !== 'favors';
+  if (!moneyOn || S.me.cashapp || S.me.venmo || S.me.zelle) return null;
+  const owedNow = S.ledger.some((l) => l.status === 'open' && l.kind === 'money' && l.to_id === S.me.id);
+  const key = `li_pay_snooze_${S.group.id}`;
+  if (!owedNow && Number(lsGet(key) || 0) > Date.now()) return null; // can't be snoozed while someone is trying to pay you
+  const save = (ev) => {
+    ev.preventDefault();
+    const d = formData(ev.currentTarget);
+    if (!d.cashapp.trim() && !d.venmo.trim() && !d.zelle.trim()) return;
+    act(() => put('/api/me', d), 'Saved. People can pay you with one tap now.');
+  };
+  return (
+    <form className="card stack setup" onSubmit={save}>
+      <div><p className="eyebrow">{owedNow ? 'Someone owes you' : 'Finish setup'}</p><h2>How should people pay you?</h2></div>
+      <p className="muted small">{owedNow ? 'They can’t pay you in the app until you add at least one of these.' : 'Add at least one. When someone owes you, they get a button that opens the app with your name and the amount filled in.'}</p>
+      <label>Cash App $cashtag<input name="cashapp" placeholder="yourtag" autoCapitalize="off" autoCorrect="off" /></label>
+      <label>Venmo username<input name="venmo" placeholder="your-handle" autoCapitalize="off" autoCorrect="off" /></label>
+      <label>Zelle phone or email<input name="zelle" autoCapitalize="off" autoCorrect="off" /></label>
+      <div className="btns"><button className="btn primary">Save</button>{owedNow ? null : <button type="button" className="btn ghost" onClick={() => { lsSet(key, String(Date.now() + 2 * 864e5)); bump((n) => n + 1); }}>Not now</button>}</div>
+    </form>
   );
 }
 
@@ -87,6 +114,7 @@ export default function Today({ personId }) {
       </div>
 
       {isMe ? <SetupCard /> : null}
+      {isMe ? <PayDetailsCard /> : null}
       {isMe ? <MoneyPrompts /> : null}
       {isMe ? <ResultCard /> : null}
 
