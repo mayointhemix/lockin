@@ -39,4 +39,27 @@ function debtReminders(rows, nameOf, today) {
   return out;
 }
 
-module.exports = { debtReminders, daysOpen, OVERDUE_DAYS, money };
+const hasPayDetails = (u) => !!(u && (u.cashapp || u.venmo || u.zelle));
+
+/**
+ * People who are owed money but have not said how to pay them.
+ * rows: open ledger rows; usersById: { id: {name, cashapp, venmo, zelle} }
+ * Returns [{ userId, title, body }], one per person.
+ */
+function payDetailReminders(rows, usersById) {
+  const waiting = new Map();
+  for (const l of rows) {
+    if (l.kind !== 'money' || l.paid_at) continue;
+    if (hasPayDetails(usersById[l.to_id])) continue;
+    if (!waiting.has(l.to_id)) waiting.set(l.to_id, new Set());
+    waiting.get(l.to_id).add(usersById[l.from_id]?.name || 'Someone');
+  }
+  const out = [];
+  for (const [userId, names] of waiting) {
+    const who = join([...names]);
+    out.push({ userId, title: 'Add how you get paid', body: `${who} ${names.size > 1 ? 'owe' : 'owes'} you money but can’t pay you in the app yet. Add your Cash App, Venmo or Zelle in Settings.` });
+  }
+  return out;
+}
+
+module.exports = { debtReminders, payDetailReminders, hasPayDetails, daysOpen, OVERDUE_DAYS, money };

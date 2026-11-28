@@ -119,7 +119,7 @@ export default function Settings() {
       </section>
 
       <div className="two">
-        <form className="card stack" onSubmit={savePay} key={`${S.me.cashapp}|${S.me.venmo}|${S.me.zelle}`}>
+        <form className="card stack" id="settings-pay" onSubmit={savePay} key={`${S.me.cashapp}|${S.me.venmo}|${S.me.zelle}`}>
           <div><p className="eyebrow">How I get paid</p><h2>Payment handles</h2></div>
           <label>Cash App $cashtag<input name="cashapp" defaultValue={S.me.cashapp || ''} placeholder="yourtag" autoCapitalize="off" /></label>
           <label>Venmo username<input name="venmo" defaultValue={S.me.venmo || ''} placeholder="your-handle" autoCapitalize="off" /></label>
@@ -169,7 +169,7 @@ export default function Settings() {
             <section className="card">
               <p className="eyebrow">Members</p>
               <div>{S.users.map((u) => (
-                <p className="line" key={u.id}><span>{u.name} {u.is_admin ? <span className="pill">admin</span> : null}{u.push ? <span className="pill good">notifications on</span> : <span className="pill warn">notifications off</span>}</span>
+                <p className="line" key={u.id}><span>{u.name} {u.is_admin ? <span className="pill">admin</span> : null}{u.push ? <span className="pill good">notifications on</span> : <span className="pill warn">notifications off</span>}{r.stakeType !== 'favors' ? (u.cashapp || u.venmo || u.zelle ? <span className="pill good">can be paid</span> : <span className="pill warn">no payment details</span>) : null}</span>
                   {u.id !== S.me.id ? <button className="btn ghost small danger" onClick={() => kick(u)}>Remove</button> : null}</p>
               ))}</div>
             </section>

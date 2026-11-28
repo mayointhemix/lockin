@@ -744,6 +744,20 @@ app.post('/api/ledger/:id/nudge', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// The person who owes can ask the other side to save how they get paid, when there is nothing to tap yet.
+const askedDetails = new Map(); // ledger id -> last asked (ms)
+app.post('/api/ledger/:id/ask-details', auth, (req, res) => {
+  const l = ledgerRow(req, res); if (!l) return;
+  if (l.from_id !== req.user.id) return fail(res, 403, 'Only the person who owes can ask');
+  if (l.status !== 'open' || l.kind !== 'money') return fail(res, 400, 'Nothing to pay here');
+  const to = db.prepare('SELECT cashapp, venmo, zelle FROM users WHERE id=?').get(l.to_id);
+  if (R.hasPayDetails(to)) return fail(res, 400, 'They have added payment details now. Refresh to see them.');
+  if (askedDetails.get(l.id) && now() - askedDetails.get(l.id) < 6 * 3600e3) return fail(res, 429, 'You already asked in the last 6 hours');
+  askedDetails.set(l.id, now());
+  push.sendToUsers([l.to_id], { title: 'Add how you get paid', body: `${req.user.name} wants to pay you ${R.money(l.amount_cents)} but you haven't added Cash App, Venmo or Zelle yet.`, url: '/#settings-pay' }).catch(() => {});
+  res.json({ ok: true });
+});
+
 // The person who owes says they've paid (or done the favor). The other side still confirms.
 app.post('/api/ledger/:id/paid', auth, (req, res) => {
   const l = ledgerRow(req, res); if (!l) return;
@@ -851,6 +865,11 @@ function remindDebts() {
   const active = new Set(db.prepare('SELECT id FROM users WHERE active=1').all().map((u) => u.id));
   for (const m of R.debtReminders(rows, (id) => names[id] || 'a former member', today())) {
     if (active.has(m.userId)) push.sendToUsers([m.userId], { title: m.title, body: m.body, url: '/#ledger' }).catch(() => {});
+  }
+  // People who are owed money but have not saved a Cash App, Venmo or Zelle yet.
+  const usersById = Object.fromEntries(db.prepare('SELECT id, name, cashapp, venmo, zelle FROM users').all().map((u) => [u.id, u]));
+  for (const m of R.payDetailReminders(rows, usersById)) {
+    if (active.has(m.userId)) push.sendToUsers([m.userId], { title: m.title, body: m.body, url: '/#settings-pay' }).catch(() => {});
   }
 }
 

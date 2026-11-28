@@ -5,18 +5,29 @@ import { daysOpen, del, fmtDay, isOverdue, money, post } from './lib.js';
 import { useApp, Money } from './ui.jsx';
 
 function PayButtons({ l }) {
-  const { userOf } = useApp();
+  const { userOf, act } = useApp();
   const to = userOf(l.to_id);
   const amt = (l.amount_cents / 100).toFixed(2);
   const note = encodeURIComponent(`Lock In — week of ${fmtDay(l.week)}`);
   const copy = async () => { try { await navigator.clipboard.writeText(to.zelle); toast.success('Copied. Open your bank app.'); } catch { toast(to.zelle); } };
-  if (!to.cashapp && !to.venmo && !to.zelle) return <p className="muted small">{to.name || 'They'} hasn’t added a payment handle yet.</p>;
+  if (!to.cashapp && !to.venmo && !to.zelle) {
+    return (
+      <>
+        <p className="notice">{to.name || 'They'} hasn’t said how to pay them yet, so there’s no button to tap.</p>
+        <div className="btns"><button className="btn" onClick={() => act(() => post(`/api/ledger/${l.id}/ask-details`), `Asked ${to.name || 'them'} to add how they get paid`)}><Send size={14} aria-hidden="true" />Ask {to.name || 'them'} to add it</button></div>
+      </>
+    );
+  }
+  const where = [to.cashapp ? `Cash App $${to.cashapp}` : '', to.venmo ? `Venmo @${to.venmo}` : '', to.zelle ? `Zelle ${to.zelle}` : ''].filter(Boolean).join(' · ');
   return (
+    <>
+    <p className="muted small">Goes straight to {to.name}: {where}</p>
     <div className="btns">
       {to.cashapp ? <a className="btn cashapp" href={`https://cash.app/$${encodeURIComponent(to.cashapp)}/${amt}`} target="_blank" rel="noopener noreferrer">Cash App</a> : null}
       {to.venmo ? <a className="btn venmo" href={`https://venmo.com/${encodeURIComponent(to.venmo)}?txn=pay&amount=${amt}&note=${note}`} target="_blank" rel="noopener noreferrer">Venmo</a> : null}
       {to.zelle ? <button className="btn" onClick={copy}>Zelle: copy {to.zelle}</button> : null}
     </div>
+    </>
   );
 }
 
