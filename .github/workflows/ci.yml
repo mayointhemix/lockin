@@ -1,0 +1,42 @@
+# Runs on every pull request and on main.
+# 1. The tests must pass.
+# 2. The frontend must build.
+# 3. The built files committed in public/ must match what the build produces,
+#    so a change in web/ can't be merged without its build.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Tests
+        run: npm test
+      - name: Build the frontend
+        run: npm run build
+      - name: public/ is up to date with web/
+        run: |
+          if ! git diff --quiet -- public; then
+            echo "::error::public/ does not match the build. Run 'npm run build' and commit the result."
+            git diff --stat -- public
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain -- public)" ]; then
+            echo "::error::The build created files in public/ that are not committed."
+            git status --porcelain -- public
+            exit 1
+          fi
