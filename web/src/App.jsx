@@ -110,7 +110,11 @@ export default function App() {
     const m = window.location.pathname.match(/^\/join\/([\w-]+)/);
     try {
       const s = await api('/api/state');
-      api('/api/accounts').then(setAccounts).catch(() => {});
+      // Pull in this person's other groups (so they show on every device), then list them.
+      post('/api/accounts/restore')
+        .then((r) => { if (r.added) toast.success(r.added === 1 ? 'Found another of your groups. Tap the group name to switch.' : `Found ${r.added} more of your groups. Tap the group name to switch.`); })
+        .catch(() => {})
+        .then(() => api('/api/accounts').then(setAccounts).catch(() => {}));
       if (m && m[1] !== s.group.invite_code) {
         // Already logged in to one group, but this link is for a different one: offer to join or log in there.
         try {
@@ -383,7 +387,7 @@ export default function App() {
                     </form>
                   </details>
                 ) : <p className="muted small">Only a group’s admin can start another group from here. To join a different group, open its invite link.</p>}
-                <p className="muted small">Groups are remembered on this device. On a new phone or browser, open each group’s invite link once and log in.</p>
+                <p className="muted small">Groups you started show up here on any device once you log in to one of them. A group you joined from someone else’s invite needs its link opened once on each device.</p>
               </div>
             </Drawer.Content>
           </Drawer.Portal>

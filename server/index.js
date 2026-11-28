@@ -189,6 +189,8 @@ function recordFail(key) {
   else a.count++;
 }
 
+const MAX_ACCOUNTS = 10; // groups one device remembers
+
 function startSession(res, userId) {
   const token = crypto.randomBytes(24).toString('base64url');
   db.prepare('INSERT INTO sessions(token,user_id,created_at) VALUES(?,?,?)').run(token, userId, now());
@@ -196,7 +198,7 @@ function startSession(res, userId) {
   cookies.push(token);
   const opts = { httpOnly: true, sameSite: 'lax', secure: res.req.secure, maxAge: 90 * 864e5 };
   res.cookie('li_session', token, opts);
-  res.cookie('li_accounts', JSON.stringify(cookies.slice(-5)), opts);
+  res.cookie('li_accounts', JSON.stringify(cookies.slice(-MAX_ACCOUNTS)), opts);
 }
 
 function auth(req, res, next) {
@@ -298,6 +300,36 @@ app.get('/api/accounts', (req, res) => {
   }
   res.json(out);
 });
+// Find this person's other groups and add them to this device.
+// "Start another group" copies the creator's PIN hash into the new group, and bcrypt hashes are
+// salted, so an identical hash plus the same name can only be the same person. No PIN is asked
+// again because they are already logged in with it.
+app.post('/api/accounts/restore', auth, (req, res) => {
+  const u = req.user;
+  const tokens = JSON.parse(req.cookies.li_accounts || '[]').filter((t) => typeof t === 'string');
+  const known = new Set();
+  const live = [];
+  for (const t of tokens) {
+    const row = db.prepare('SELECT user_id FROM sessions WHERE token=?').get(t);
+    if (row) { known.add(row.user_id); live.push(t); }
+  }
+  if (!live.includes(req.cookies.li_session)) { live.push(req.cookies.li_session); known.add(u.id); }
+  const siblings = db.prepare('SELECT id FROM users WHERE id<>? AND active=1 AND pin_hash=? AND name=? COLLATE NOCASE ORDER BY id').all(u.id, u.pin_hash, u.name);
+  let added = 0;
+  for (const s of siblings) {
+    if (known.has(s.id)) continue;
+    const token = crypto.randomBytes(24).toString('base64url');
+    db.prepare('INSERT INTO sessions(token,user_id,created_at) VALUES(?,?,?)').run(token, s.id, now());
+    live.push(token); added++;
+  }
+  if (added || live.length !== tokens.length) {
+    // Keep the current group no matter what, then the most recent others.
+    const keep = [req.cookies.li_session, ...live.filter((t) => t !== req.cookies.li_session).slice(-(MAX_ACCOUNTS - 1))];
+    res.cookie('li_accounts', JSON.stringify(keep), { httpOnly: true, sameSite: 'lax', secure: req.secure, maxAge: 90 * 864e5 });
+  }
+  res.json({ ok: true, added });
+});
+
 app.post('/api/accounts/switch', (req, res) => {
   const tokens = JSON.parse(req.cookies.li_accounts || '[]');
   if (!tokens.includes(req.body.token)) return fail(res, 400, 'Unknown account');
