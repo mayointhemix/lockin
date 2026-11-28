@@ -313,7 +313,8 @@ app.get('/api/state', auth, (req, res) => {
   const week = currentWeek();
   const { rules, stats } = weekStats(gid, week);
   const projection = computeSettlement(stats, rules);
-  const users = db.prepare('SELECT id,name,is_admin,cashapp,venmo,zelle FROM users WHERE group_id=? AND active=1 ORDER BY id').all(gid);
+  // `push` = this member has notifications turned on for at least one device, so the group can see who still needs to.
+  const users = db.prepare('SELECT id,name,is_admin,cashapp,venmo,zelle, EXISTS(SELECT 1 FROM push_subs p WHERE p.user_id=users.id) AS push FROM users WHERE group_id=? AND active=1 ORDER BY id').all(gid);
 
   const feed = db.prepare('SELECT * FROM checkins WHERE group_id=? ORDER BY id DESC LIMIT 60').all(gid).map((c) => ({
     ...c,

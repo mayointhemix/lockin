@@ -59,6 +59,46 @@ export function uploadCheckin({ file, kind, goalId, note, onProgress }) {
   });
 }
 
+// ---- phone setup: Home Screen + notifications ----
+export const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+export const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone;
+export const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+// Android and desktop Chrome hand us an "install" event we can trigger from a button. iOS has no such thing.
+let installEvent = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; window.dispatchEvent(new Event('li-install-ready')); });
+  window.addEventListener('appinstalled', () => { installEvent = null; });
+}
+export const canInstall = () => !!installEvent;
+export async function promptInstall() {
+  if (!installEvent) return false;
+  installEvent.prompt();
+  const { outcome } = await installEvent.userChoice;
+  installEvent = null;
+  return outcome === 'accepted';
+}
+
+// Is this device already signed up for notifications?
+export async function pushIsOn() {
+  if (!pushSupported() || Notification.permission !== 'granted') return false;
+  try {
+    const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(() => r(null), 2500))]);
+    return !!(reg && await reg.pushManager.getSubscription());
+  } catch { return false; }
+}
+
+// Must be called from a tap: the phone only shows its permission question in response to one.
+export async function enablePush(pushKey) {
+  if (!pushSupported()) throw new Error('This browser can’t do push notifications');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Notifications are blocked. Allow them for Lock In in your phone’s settings.');
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64(pushKey) });
+  await post('/api/push/subscribe', sub.toJSON());
+}
+
 export function urlB64(base64) {
   const pad = '='.repeat((4 - (base64.length % 4)) % 4);
   const raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
