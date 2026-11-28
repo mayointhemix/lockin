@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { toast } from 'sonner';
-import { post, lsSet, formData } from './lib.js';
+import { post, lsSet, formData, isIOS, isStandalone } from './lib.js';
+import { HelpVideo } from './ui.jsx';
 
 export function CreateGroup({ onDone }) {
   const submit = async (ev) => {
@@ -54,6 +55,13 @@ export function AuthScreen({ code, fromLink, info, error, stayIn, onDone }) {
         </>
       ) : null}
       {stayIn ? <button className="btn ghost" onClick={onDone}>Not now. Back to {stayIn}</button> : null}
+      {info.helpVideo && isIOS() && !isStandalone() ? (
+        <section className="card">
+          <div><p className="eyebrow">On iPhone</p><h2>Add Lock In to your Home Screen</h2></div>
+          <p className="muted small">Do this after you join so you get notified when your group posts. This short video shows how.</p>
+          <HelpVideo v={info.helpVideo} />
+        </section>
+      ) : null}
     </>
   );
 }

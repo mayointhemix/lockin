@@ -7,6 +7,12 @@ import { DOW, post, formData, media } from './lib.js';
 export const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
 
+// The admin's how-to video. `v` is the upload's version number (0 = none uploaded).
+export function HelpVideo({ v }) {
+  if (!v) return null;
+  return <video className="help-video" src={`/help-video?v=${v}`} controls playsInline preload="metadata" aria-label="How to add Lock In to your Home Screen" />;
+}
+
 export function Money({ cents }) {
   return <NumberFlow value={cents / 100} format={{ style: 'currency', currency: 'USD', minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 }} />;
 }
