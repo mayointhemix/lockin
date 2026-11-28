@@ -30,7 +30,8 @@ if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split("."
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
-apt-get install -y sqlite3 rsync >/dev/null 2>&1 || true
+# make + a compiler are needed because the database module (better-sqlite3) is built during npm ci.
+apt-get install -y sqlite3 rsync make build-essential >/dev/null 2>&1 || true
 
 say "Picking a free internal port"
 while ss -ltn | awk '{print $4}' | grep -qE "[:.]$PORT\$"; do
@@ -106,16 +107,31 @@ NGX
       apt-get update -y && apt-get install -y caddy
     fi
     touch /etc/caddy/Caddyfile
+    # Other sites may live in this file. Keep a copy, and only apply the change if Caddy accepts it.
+    # Never restart Caddy from here: a restart with a bad config takes every site on the server down.
+    cp -a /etc/caddy/Caddyfile /etc/caddy/Caddyfile.pre-lockin
     sed -i "/# lockin-begin/,/# lockin-end/d" /etc/caddy/Caddyfile
     cat >> /etc/caddy/Caddyfile <<CADDY
 # lockin-begin
 $DOMAIN {
-  request_body { max_size 110MB }
-  reverse_proxy 127.0.0.1:$PORT { flush_interval -1 }
+	request_body {
+		max_size 110MB
+	}
+	reverse_proxy 127.0.0.1:$PORT {
+		flush_interval -1
+	}
 }
 # lockin-end
 CADDY
-    caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && systemctl reload caddy || systemctl restart caddy
+    if caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+      systemctl reload caddy
+      echo "Caddy now serves $DOMAIN (previous config kept at /etc/caddy/Caddyfile.pre-lockin)"
+    else
+      cp -a /etc/caddy/Caddyfile.pre-lockin /etc/caddy/Caddyfile
+      echo "!! Caddy rejected the new config, so nothing was changed and Caddy was left running as it was."
+      echo "   Lock In is running on 127.0.0.1:$PORT. Add a site block for $DOMAIN by hand:"
+      echo "   see deploy/RUNBOOK.md, then run: caddy validate ... && systemctl reload caddy"
+    fi
     ;;
   *)
     echo "!! Ports 80/443 are used by '$WEB', which this script doesn't configure automatically."

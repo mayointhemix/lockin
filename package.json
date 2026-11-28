@@ -8,7 +8,8 @@
     "test": "node --test",
     "build": "vite build",
     "dev:web": "vite",
-    "deploy": "bash deploy/deploy.sh"
+    "deploy": "bash deploy/deploy.sh",
+    "seed": "node scripts/seed-dev.js"
   },
   "license": "UNLICENSED",
   "dependencies": {
