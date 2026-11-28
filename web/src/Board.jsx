@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import NumberFlow from '@number-flow/react';
 import { Drawer } from 'vaul';
 import { ChevronLeft, ChevronRight, Crown, X } from 'lucide-react';
-import { DOW, addDays, fmtDay, fmtTime, media, money, stakesLine } from './lib.js';
+import { DOW, addDays, fmtDay, fmtTime, isOverdue, media, money, stakesLine } from './lib.js';
 import { useApp, GoalRow, CommentForm, Cell } from './ui.jsx';
 
 function PostSheet({ post, onClose }) {
@@ -96,6 +96,11 @@ export default function Board() {
           const q = s.gymDays >= r.daysRequired;
           const proofs = W.checkins.filter((c) => c.user_id === s.id && c.kind === 'proof');
           const goals = [...s.goals, ...s.challenge];
+          const debts = current ? S.ledger.filter((l) => l.status === 'open' && l.from_id === s.id && !l.paid_at) : [];
+          const owes = debts.filter((l) => l.kind === 'money').reduce((sum, l) => sum + l.amount_cents, 0);
+          const favorsOwed = debts.filter((l) => l.kind === 'favor').length;
+          const late = debts.some((l) => isOverdue(l, S.today));
+          const owesText = [owes ? money(owes) : '', favorsOwed ? `${favorsOwed} favor${favorsOwed > 1 ? 's' : ''}` : ''].filter(Boolean).join(' + ');
           return (
             <section className="card" key={s.id}>
               <div className="card-head">
@@ -106,7 +111,7 @@ export default function Board() {
                 <p className="line plain"><span>Gym</span><span className="mono muted">{s.gymDays} / {r.daysRequired}</span></p>
                 <div className={`bar ${q ? 'done' : ''}`}><i style={{ width: `${Math.min(100, (s.gymDays / r.daysRequired) * 100)}%` }} /></div>
               </div>
-              <div className="btns">{q ? <span className="pill good">Eligible for pot</span> : <span className="pill bad">{current ? 'Not eligible yet' : 'Missed'}</span>}{lead(res[s.id])}</div>
+              <div className="btns">{q ? <span className="pill good">Eligible for pot</span> : <span className="pill bad">{current ? 'Not eligible yet' : 'Missed'}</span>}{lead(res[s.id])}{debts.length ? <span className={`pill ${late ? 'bad' : 'warn'}`}>Owes {owesText}{late ? ' · overdue' : ''}</span> : null}</div>
               {goals.length ? <div className="goals">{goals.map((g) => <GoalRow key={g.id} g={g} mine={false} />)}</div> : <p className="muted small">No bonus goals this week.</p>}
               {proofs.length ? <div><p className="muted small">Proof posted</p><div className="proofs">{proofs.map((c) => <Cell key={c.id} posts={[c]} label={`${s.name} proof`} onOpen={setOpenId} />)}</div></div> : null}
             </section>

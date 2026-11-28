@@ -23,6 +23,12 @@ export const lsGet = (k) => { try { return localStorage.getItem(k); } catch { re
 export const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
 export const formData = (form) => Object.fromEntries(new FormData(form));
 
+// A week's debts are created the Monday after it. Days since then (0 on that Monday).
+const dayNum = (d) => { const [y, m, dd] = d.split('-').map(Number); return Date.UTC(y, m - 1, dd) / 864e5; };
+export const daysOpen = (week, today) => dayNum(today) - (dayNum(week) + 7);
+export const OVERDUE_DAYS = 3;
+export const isOverdue = (l, today) => l.status === 'open' && !l.paid_at && daysOpen(l.week, today) >= OVERDUE_DAYS;
+
 export function greeting() {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';

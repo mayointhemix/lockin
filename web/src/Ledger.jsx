@@ -1,7 +1,7 @@
 import React from 'react';
 import { toast } from 'sonner';
-import { Check, Send, Dices, Lock } from 'lucide-react';
-import { del, fmtDay, money, post } from './lib.js';
+import { Check, Send, Dices, Lock, Clock, Undo2 } from 'lucide-react';
+import { daysOpen, del, fmtDay, isOverdue, money, post } from './lib.js';
 import { useApp, Money } from './ui.jsx';
 
 function PayButtons({ l }) {
@@ -23,6 +23,13 @@ function PayButtons({ l }) {
 function Desc({ l }) {
   if (l.kind === 'money') return <span className="money"><Money cents={l.amount_cents} /></span>;
   return <div><b>{l.reason === 'pot' ? 'Bonus favor' : 'Favor'}</b>{l.favor_text ? <div className="favcard">{l.favor_text}</div> : <p className="muted small">Not chosen yet</p>}</div>;
+}
+
+// "Overdue · 5 days" once a debt has sat unpaid for a few days.
+function Overdue({ l }) {
+  const { S } = useApp();
+  if (!isOverdue(l, S.today)) return null;
+  return <span className="pill bad"><Clock size={12} aria-hidden="true" />Overdue · {daysOpen(l.week, S.today)} days</span>;
 }
 
 function FavorDeck() {
@@ -81,7 +88,7 @@ export default function Ledger() {
     <>
       <p className="eyebrow date">Settle up</p>
       <h1>Who owes <span className="accent">who</span></h1>
-      <p className="muted lede">Weeks settle Monday 12:05am ET. Debts are netted so there are as few payments as possible.</p>
+      <p className="muted lede">Weeks settle Monday 12:05am ET. Debts are netted so there are as few payments as possible. Anyone who still owes gets a reminder every morning.</p>
 
       {!iOwe.length && !owedMe.length ? <section className="card"><p>All square.</p></section> : null}
       <div className="two">
@@ -90,9 +97,20 @@ export default function Ledger() {
             <p className="eyebrow">You owe</p>
             {iOwe.map((l) => (
               <div className="debt" key={l.id}>
-                <p className="muted small">Week of {fmtDay(l.week)} · to {nameOf(l.to_id)}</p>
+                <p className="muted small debt-meta">Week of {fmtDay(l.week)} · to {nameOf(l.to_id)} <Overdue l={l} /></p>
                 <Desc l={l} />
-                {l.kind === 'money' ? <><PayButtons l={l} /><p className="muted small">After you pay, they tap “Received.”</p></> : <p className="muted small">They mark it redeemed once you deliver.</p>}
+                {l.paid_at ? (
+                  <>
+                    <span className="pill warn"><Clock size={12} aria-hidden="true" />Waiting for {nameOf(l.to_id)} to confirm</span>
+                    <div className="btns"><button className="btn ghost small" onClick={() => act(() => post(`/api/ledger/${l.id}/unpaid`), 'Marked as not paid yet')}><Undo2 size={13} aria-hidden="true" />I haven’t {l.kind === 'money' ? 'paid' : 'done it'} yet</button></div>
+                  </>
+                ) : (
+                  <>
+                    {l.kind === 'money' ? <PayButtons l={l} /> : null}
+                    <div className="btns"><button className="btn primary" onClick={() => act(() => post(`/api/ledger/${l.id}/paid`), `Told ${nameOf(l.to_id)}. They confirm on their side.`)}><Check size={15} aria-hidden="true" />{l.kind === 'money' ? 'I paid' : 'I did it'}</button></div>
+                    <p className="muted small">{l.kind === 'money' ? 'Pay first, then tap “I paid.” They get a prompt to confirm.' : 'Do the favor, then tap “I did it.” They confirm once you deliver.'}</p>
+                  </>
+                )}
               </div>
             ))}
           </section>
@@ -104,8 +122,9 @@ export default function Ledger() {
               const from = userOf(l.from_id);
               return (
                 <div className="debt" key={l.id}>
-                  <p className="muted small">Week of {fmtDay(l.week)} · from {nameOf(l.from_id)}</p>
+                  <p className="muted small debt-meta">Week of {fmtDay(l.week)} · from {nameOf(l.from_id)} <Overdue l={l} /></p>
                   <Desc l={l} />
+                  {l.paid_at ? <div className="notice">{nameOf(l.from_id)} says {l.kind === 'money' ? 'they paid this' : 'the favor is done'}. Check, then confirm.</div> : null}
                   {l.kind === 'favor' && !l.favor_text ? (
                     <div className="btns">
                       <button className="btn primary" onClick={() => act(() => post(`/api/ledger/${l.id}/favor`), 'Drawn')}><Dices size={15} aria-hidden="true" />Draw random</button>
@@ -116,7 +135,9 @@ export default function Ledger() {
                   <div className="btns">
                     {l.kind === 'money' && from.venmo ? <a className="btn venmo" href={`https://venmo.com/${encodeURIComponent(from.venmo)}?txn=charge&amount=${(l.amount_cents / 100).toFixed(2)}&note=${encodeURIComponent(`Lock In — week of ${fmtDay(l.week)}`)}`} target="_blank" rel="noopener noreferrer">Request on Venmo</a> : null}
                     <button className="btn good" onClick={() => settle(l)}><Check size={15} aria-hidden="true" />{l.kind === 'money' ? 'Received' : 'Redeemed'}</button>
-                    <button className="btn" onClick={() => act(() => post(`/api/ledger/${l.id}/nudge`), 'Nudged')}><Send size={14} aria-hidden="true" />Nudge</button>
+                    {l.paid_at
+                      ? <button className="btn" onClick={() => act(() => post(`/api/ledger/${l.id}/unpaid`), `Told ${nameOf(l.from_id)} it hasn’t arrived`)}>{l.kind === 'money' ? 'Didn’t get it' : 'Not done yet'}</button>
+                      : <button className="btn" onClick={() => act(() => post(`/api/ledger/${l.id}/nudge`), 'Nudged')}><Send size={14} aria-hidden="true" />Nudge</button>}
                   </div>
                 </div>
               );
@@ -128,7 +149,7 @@ export default function Ledger() {
       {others.length ? (
         <section className="card">
           <p className="eyebrow">Rest of the group</p>
-          <div>{others.map((l) => <p className="line" key={l.id}><b>{nameOf(l.from_id)} → {nameOf(l.to_id)}</b><span className="mono">{l.kind === 'money' ? money(l.amount_cents) : 'a favor'}</span></p>)}</div>
+          <div>{others.map((l) => <p className="line" key={l.id}><b>{nameOf(l.from_id)} → {nameOf(l.to_id)}</b><span><Overdue l={l} /><span className="mono">{l.kind === 'money' ? money(l.amount_cents) : 'a favor'}</span></span></p>)}</div>
         </section>
       ) : null}
 

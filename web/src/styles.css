@@ -331,3 +331,10 @@ button.cell.hit, button.cell.flag { background-size: cover; background-position:
   .group-chip svg { color: var(--muted); flex: none; }
   .top > div { flex: 1; min-width: 0; }
 }
+
+/* payment prompts */
+.prompt { border-color: rgba(224, 169, 71, 0.45); }
+.prompt.late { border-color: rgba(226, 104, 107, 0.55); }
+.prompt.late .eyebrow { color: var(--bad); }
+.debt-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.debt > .pill { align-self: flex-start; }
