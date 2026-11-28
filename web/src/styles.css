@@ -338,3 +338,12 @@ button.cell.hit, button.cell.flag { background-size: cover; background-position:
 .prompt.late .eyebrow { color: var(--bad); }
 .debt-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .debt > .pill { align-self: flex-start; }
+
+/* finish-setup card */
+.setup { border-color: rgba(61, 139, 242, 0.5); }
+.setup .card-head > svg { color: var(--accent); flex: none; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; counter-reset: step; }
+.steps li { display: flex; align-items: flex-start; gap: 10px; counter-increment: step; }
+.steps li::before { content: counter(step); flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font: 500 12px var(--mono); background: var(--accent-soft); color: var(--accent); }
+.steps li svg { flex: none; margin-top: 3px; color: var(--muted); }
+.steps li span { min-width: 0; }

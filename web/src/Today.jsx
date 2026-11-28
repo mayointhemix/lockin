@@ -3,6 +3,7 @@ import NumberFlow from '@number-flow/react';
 import { Camera, Dumbbell, Target, Trophy, Wallet, Crown } from 'lucide-react';
 import { fmtDay, greeting, isOverdue, lsGet, lsSet, money, stakesLine } from './lib.js';
 import { useApp, Stat, DayStrip, GoalRow, NewGoalForm, Money } from './ui.jsx';
+import SetupCard from './Setup.jsx';
 
 function ResultCard() {
   const { S, nameOf } = useApp();
@@ -85,6 +86,7 @@ export default function Today({ personId }) {
         <Stat label={isMe ? 'You owe' : 'Owes'} icon={Wallet} sub={favors ? `plus ${favors} favor${favors > 1 ? 's' : ''}` : debts.length ? 'Open from past weeks' : 'All square'}><Money cents={oweCents} /></Stat>
       </div>
 
+      {isMe ? <SetupCard /> : null}
       {isMe ? <MoneyPrompts /> : null}
       {isMe ? <ResultCard /> : null}
 
