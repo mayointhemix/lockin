@@ -9,6 +9,7 @@ const cron = require('node-cron');
 const { db, UPLOAD_DIR } = require('./db');
 const S = require('./settlement');
 const push = require('./push');
+const R = require('./reminders');
 
 let sharp = null;
 try { sharp = require('sharp'); } catch { /* optional */ }
@@ -664,6 +665,32 @@ app.post('/api/ledger/:id/nudge', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// The person who owes says they've paid (or done the favor). The other side still confirms.
+app.post('/api/ledger/:id/paid', auth, (req, res) => {
+  const l = ledgerRow(req, res); if (!l) return;
+  if (l.from_id !== req.user.id) return fail(res, 403, 'Only the person who owes can mark this as paid');
+  if (l.status !== 'open') return fail(res, 400, 'Already settled');
+  db.prepare('UPDATE ledger SET paid_at=? WHERE id=?').run(now(), l.id);
+  const body = l.kind === 'money' ? `${req.user.name} says they paid you ${R.money(l.amount_cents)}. Tap Received if it landed.` : `${req.user.name} says the favor is done. Tap Redeemed if it's true.`;
+  push.sendToUsers([l.to_id], { title: 'Confirm a payment', body, url: '/#ledger' }).catch(() => {});
+  broadcast(l.group_id, 'ledger');
+  res.json({ ok: true });
+});
+
+// Either side can take the "paid" mark back off: the payer tapped by mistake, or the money never arrived.
+app.post('/api/ledger/:id/unpaid', auth, (req, res) => {
+  const l = ledgerRow(req, res); if (!l) return;
+  if (l.from_id !== req.user.id && l.to_id !== req.user.id) return fail(res, 403, 'Not yours');
+  if (l.status !== 'open') return fail(res, 400, 'Already settled');
+  db.prepare('UPDATE ledger SET paid_at=NULL WHERE id=?').run(l.id);
+  if (l.to_id === req.user.id) {
+    const body = l.kind === 'money' ? `${req.user.name} hasn't received the ${R.money(l.amount_cents)} yet.` : `${req.user.name} says the favor isn't done yet.`;
+    push.sendToUsers([l.from_id], { title: 'Not received yet', body, url: '/#ledger' }).catch(() => {});
+  }
+  broadcast(l.group_id, 'ledger');
+  res.json({ ok: true });
+});
+
 // Winner picks which favor they're collecting: a specific card, a random card, or a custom one.
 app.post('/api/ledger/:id/favor', auth, (req, res) => {
   const l = ledgerRow(req, res); if (!l) return;
@@ -738,8 +765,19 @@ function remind(title, bodyFn) {
   }
 }
 
+// Once a day: remind people who owe, and people who need to confirm a payment.
+function remindDebts() {
+  const rows = db.prepare("SELECT * FROM ledger WHERE status='open'").all();
+  const names = Object.fromEntries(db.prepare('SELECT id, name FROM users').all().map((u) => [u.id, u.name]));
+  const active = new Set(db.prepare('SELECT id FROM users WHERE active=1').all().map((u) => u.id));
+  for (const m of R.debtReminders(rows, (id) => names[id] || 'a former member', today())) {
+    if (active.has(m.userId)) push.sendToUsers([m.userId], { title: m.title, body: m.body, url: '/#ledger' }).catch(() => {});
+  }
+}
+
 if (require.main === module) {
   runSettlements();
+  cron.schedule('0 10 * * *', remindDebts, { timezone: TZ });
   cron.schedule('*/5 * * * *', runSettlements, { timezone: TZ });
   cron.schedule('0 19 * * *', () => remind('No gym yet today', (s, need, left) => (need > left
     ? `You're at ${s.gymDays} — the math says you can't make it this week. Go anyway.`
@@ -748,4 +786,4 @@ if (require.main === module) {
   app.listen(PORT, process.env.HOST || '0.0.0.0', () => console.log(`Lock In running on :${PORT}`));
 }
 
-module.exports = { app, runSettlements, settleWeekIfDue };
+module.exports = { app, runSettlements, settleWeekIfDue, remindDebts };

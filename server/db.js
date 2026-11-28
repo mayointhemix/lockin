@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, user_id INTEGER
 // Lightweight migrations for columns added after first release.
 const hasCol = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
 if (!hasCol('users', 'unseen')) db.exec('ALTER TABLE users ADD COLUMN unseen INTEGER NOT NULL DEFAULT 0');
+if (!hasCol('ledger', 'paid_at')) db.exec('ALTER TABLE ledger ADD COLUMN paid_at INTEGER'); // when the payer tapped "I paid"
 
 const getSetting = (k) => db.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value;
 const setSetting = (k, v) => db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k, v);

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import NumberFlow from '@number-flow/react';
 import { Camera, Dumbbell, Target, Trophy, Wallet, Crown } from 'lucide-react';
-import { fmtDay, greeting, lsGet, lsSet, money, stakesLine } from './lib.js';
+import { fmtDay, greeting, isOverdue, lsGet, lsSet, money, stakesLine } from './lib.js';
 import { useApp, Stat, DayStrip, GoalRow, NewGoalForm, Money } from './ui.jsx';
 
 function ResultCard() {
@@ -21,6 +21,33 @@ function ResultCard() {
       <div>{w.results.map((x) => <p className="line" key={x.id}><b>{nameOf(x.id)}</b><span className="mono">{x.gymDays} gym · {x.points} pts · {x.qualified ? 'hit' : 'missed'}</span></p>)}</div>
       {mine.length ? mine.map((l) => <p key={l.id}>{l.from_id === S.me.id ? <>You owe {nameOf(l.to_id)} {what(l)}</> : <>{nameOf(l.from_id)} owes you {what(l)}</>}</p>) : <p>You’re all square.</p>}
       <div className="btns">{mine.length ? <a className="btn primary" href="#ledger" onClick={dismiss}>Settle up</a> : null}<button className="btn" onClick={dismiss}>Got it</button></div>
+    </section>
+  );
+}
+
+// Things about money that need you: debts you haven't paid, and payments waiting for your confirmation.
+function MoneyPrompts() {
+  const { S, nameOf } = useApp();
+  const open = S.ledger.filter((l) => l.status === 'open');
+  const iOwe = open.filter((l) => l.from_id === S.me.id && !l.paid_at);
+  const toConfirm = open.filter((l) => l.to_id === S.me.id && l.paid_at);
+  if (!iOwe.length && !toConfirm.length) return null;
+  const what = (l) => (l.kind === 'money' ? money(l.amount_cents) : 'a favor');
+  const late = iOwe.some((l) => isOverdue(l, S.today));
+  return (
+    <section className={`card prompt ${late ? 'late' : ''}`}>
+      {iOwe.length ? (
+        <div className="card-head">
+          <div><p className="eyebrow">{late ? 'Overdue' : 'Settle up'}</p><h2>You owe {iOwe.map((l) => `${nameOf(l.to_id)} ${what(l)}`).join(', ')}</h2></div>
+          <a className="btn primary" href="#ledger">Pay now</a>
+        </div>
+      ) : null}
+      {toConfirm.length ? (
+        <div className="card-head">
+          <div><p className="eyebrow">Confirm</p><h2>{toConfirm.map((l) => `${nameOf(l.from_id)} says they ${l.kind === 'money' ? `paid you ${what(l)}` : 'did the favor'}`).join(', ')}</h2></div>
+          <a className="btn" href="#ledger">Check it</a>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -58,6 +85,7 @@ export default function Today({ personId }) {
         <Stat label={isMe ? 'You owe' : 'Owes'} icon={Wallet} sub={favors ? `plus ${favors} favor${favors > 1 ? 's' : ''}` : debts.length ? 'Open from past weeks' : 'All square'}><Money cents={oweCents} /></Stat>
       </div>
 
+      {isMe ? <MoneyPrompts /> : null}
       {isMe ? <ResultCard /> : null}
 
       <section className="card hero-card">
