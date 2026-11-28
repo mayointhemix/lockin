@@ -21,4 +21,15 @@ npm install && npm start
 
 Then open http://localhost:3000. Run the tests with `npm test`.
 
+## Changing the frontend
+
+The frontend is a React app in `web/` (Radix tabs, Sonner toasts, Vaul sheets, cmdk command menu, NumberFlow). The server serves the finished build from `public/`, which is committed, so the server itself needs no build tools.
+
+```bash
+npm install
+npm run build
+```
+
+Run `npm run build` after any change in `web/` and commit the updated `public/` with it. For live reload while editing, run `npm start` in one terminal and `npm run dev:web` in another.
+
 Data lives in `DATA_DIR` (default `./data`): one SQLite file plus an `uploads` folder.
