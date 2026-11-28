@@ -25,7 +25,7 @@ export function CreateGroup({ onDone }) {
   );
 }
 
-export function AuthScreen({ code, fromLink, info, error, onDone }) {
+export function AuthScreen({ code, fromLink, info, error, stayIn, onDone }) {
   const [mode, setMode] = useState(fromLink ? 'join' : 'login');
   if (error) return <><h1>Lock In</h1><p className="muted">{error}. Ask for a fresh invite link.</p></>;
   const join = mode === 'join' || !info.names.length;
@@ -37,7 +37,7 @@ export function AuthScreen({ code, fromLink, info, error, onDone }) {
     <>
       <p className="eyebrow">{info.groupName}</p>
       <h1>{join ? <>Join the <span className="accent">group</span></> : <>Welcome <span className="accent">back</span></>}</h1>
-      <p className="muted">Show up. Post proof. Don’t pay.</p>
+      <p className="muted">{stayIn ? `You’re also in ${stayIn}. Joining here adds this group next to it, and you can switch between them any time.` : 'Show up. Post proof. Don’t pay.'}</p>
       <form className="card stack" onSubmit={submit} key={join ? 'join' : 'login'}>
         {join
           ? <label>Your name<input name="name" required maxLength={30} autoComplete="name" /></label>
@@ -53,6 +53,7 @@ export function AuthScreen({ code, fromLink, info, error, onDone }) {
           <p className="muted small">Members: {info.names.join(', ')}</p>
         </>
       ) : null}
+      {stayIn ? <button className="btn ghost" onClick={onDone}>Not now. Back to {stayIn}</button> : null}
     </>
   );
 }

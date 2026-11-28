@@ -313,3 +313,21 @@ button.cell { cursor: pointer; background-size: cover; background-position: cent
   .people { grid-template-columns: minmax(0, 1fr); }
 }
 button.cell.hit, button.cell.flag { background-size: cover; background-position: center; }
+
+/* groups: always-visible switcher */
+.group-btn { width: 100%; text-align: left; padding: 8px; border-radius: 16px; border: 1px solid transparent; }
+.group-btn:hover { background: rgba(255, 255, 255, 0.05); border-color: var(--line); }
+.group-btn > div { flex: 1; min-width: 0; }
+.group-btn b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-btn > svg { color: var(--muted); flex: none; }
+.group-chip { display: none; }
+.group-row { justify-content: space-between !important; padding: 13px 14px; }
+.group-row.on { border-color: var(--accent); background: var(--accent-soft); }
+.group-row .pill { margin-left: 0; }
+@media (max-width: 860px) {
+  .top { flex-wrap: wrap; }
+  .group-chip { display: inline-flex; align-items: center; gap: 7px; flex: 1 1 100%; min-width: 0; padding: 6px 2px; font-weight: 600; font-size: 15px; }
+  .group-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .group-chip svg { color: var(--muted); flex: none; }
+  .top > div { flex: 1; min-width: 0; }
+}

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { toast } from 'sonner';
-import { api, del, fmtDay, formData, lsSet, post, put, stakesLine, urlB64 } from './lib.js';
+import { del, fmtDay, formData, post, put, stakesLine, urlB64 } from './lib.js';
 import { useApp, NewGoalForm } from './ui.jsx';
 
 function GoalEditor({ list, isChallenge }) {
@@ -23,22 +23,8 @@ function GoalEditor({ list, isChallenge }) {
   );
 }
 
-function Accounts() {
-  const { boot } = useApp();
-  const [acc, setAcc] = useState([]);
-  useEffect(() => { api('/api/accounts').then(setAcc).catch(() => {}); }, []);
-  if (acc.length < 2) return null;
-  const sw = async (token) => { await post('/api/accounts/switch', { token }); window.location.hash = '#today'; boot(); };
-  return (
-    <section className="card">
-      <p className="eyebrow">Your groups on this phone</p>
-      <div className="btns">{acc.map((a) => <button key={a.token} className={`btn ${a.current ? 'primary' : ''}`} onClick={() => sw(a.token)}>{a.group}</button>)}</div>
-    </section>
-  );
-}
-
 export default function Settings() {
-  const { S, act, ask, boot, shareInvite } = useApp();
+  const { S, act, ask, shareInvite, openGroups } = useApp();
   const r = S.group.rules;
   const E = S.edit;
   const invite = `${window.location.origin}/join/${S.group.invite_code}`;
@@ -69,17 +55,15 @@ export default function Settings() {
     act(async () => { const r2 = await put('/api/group', d); toast.success(r2.appliesNow ? 'Saved. Applies this week.' : 'Saved. Starts next Monday.'); });
   };
   const kick = async (u) => { if (await ask({ title: `Remove ${u.name}?`, description: 'They lose access to this group.', confirmLabel: 'Remove', danger: true })) act(() => del(`/api/members/${u.id}`), 'Removed'); };
-  const newGroup = async (ev) => {
-    ev.preventDefault();
-    try { const r2 = await post('/api/groups', formData(ev.currentTarget)); lsSet('li_code', r2.code); toast.success('Group created. Send the invite.'); window.location.hash = '#settings'; boot(); } catch (e) { toast.error(e.message); }
-  };
   const logout = async () => { await post('/api/logout'); window.location.reload(); };
 
   return (
     <>
       <p className="eyebrow date">{S.group.name}</p>
       <h1>Your <span className="accent">settings</span></h1>
-      <Accounts />
+      <section className="card">
+        <div className="card-head"><div><p className="eyebrow">Groups</p><h2>You’re in {S.group.name}</h2></div><button className="btn" onClick={openGroups}>Switch or start a group</button></div>
+      </section>
 
       <div className="two">
         <section className="card">
@@ -168,13 +152,6 @@ export default function Settings() {
                   {u.id !== S.me.id ? <button className="btn ghost small danger" onClick={() => kick(u)}>Remove</button> : null}</p>
               ))}</div>
             </section>
-            <form className="card stack" onSubmit={newGroup}>
-              <div><p className="eyebrow">Start another group</p></div>
-              <p className="muted small">E.g. a separate one for you and your partner with favor stakes. You’ll use the same name and PIN there; switch groups at the top of Settings.</p>
-              <input name="groupName" placeholder="Group name" aria-label="Group name" required maxLength={60} />
-              <select name="stakeType" defaultValue="favors" aria-label="Stakes"><option value="favors">Favors</option><option value="money">Money</option><option value="both">Money + favors</option></select>
-              <button className="btn full">Create group</button>
-            </form>
           </div>
         </>
       ) : (
